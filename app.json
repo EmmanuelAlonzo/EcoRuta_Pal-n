@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "EcoRuta Palín",
+    "slug": "ecoruta-palin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permite a Econoruta Palín acceder a la cámara para escanear códigos QR de reciclaje."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permite registrar las coordenadas de recolección en las rutas de Palín."
+        }
+      ],
+      "expo-sqlite",
+      "expo-status-bar"
+    ]
+  }
+}
