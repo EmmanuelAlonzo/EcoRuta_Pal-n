@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Image,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -469,6 +470,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 100, // REQUERIMIENTO: Evita que el Bottom Tab Bar tape el contenido
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   loadingContainer: {
     flex: 1,

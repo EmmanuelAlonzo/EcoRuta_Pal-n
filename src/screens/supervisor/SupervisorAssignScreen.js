@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   StatusBar,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { THEME } from '../../constants/theme';
@@ -309,6 +310,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.border,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   headerTitle: {
     fontSize: 20,
@@ -323,6 +329,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
     paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   centerContainer: {
     flex: 1,

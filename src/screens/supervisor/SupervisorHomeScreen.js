@@ -12,6 +12,7 @@ import {
   Modal,
   ScrollView,
   StatusBar,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -566,6 +567,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.border,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   badgeRow: {
     flexDirection: 'row',
@@ -640,6 +646,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   sectionHeaderTitle: {
     fontSize: 15,
@@ -660,6 +671,11 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 20,
     paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   centerContainer: {
     flex: 1,

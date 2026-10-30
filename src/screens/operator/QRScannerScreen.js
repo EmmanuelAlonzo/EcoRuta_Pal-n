@@ -9,6 +9,7 @@ import {
   Alert,
   TextInput,
   Pressable,
+  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
@@ -142,6 +143,45 @@ export default function QRScannerScreen({ navigation }) {
     },
     [scannerInputValue, handleBarcodeScanned]
   );
+
+  // ─── SOPORTE HARDWARE EN WEB (PC, MAC, TV): CAPTURA DIRECTA DE ESCÁNER HID ───
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && isFocused && !scanned) {
+      let barcodeBuffer = '';
+      let lastKeyTime = Date.now();
+
+      const handleWebKeyDown = (e) => {
+        // Ignorar si el usuario está interactuando con otro input del sistema
+        if (e.target && e.target.tagName === 'INPUT' && e.target !== inputRef.current) {
+          return;
+        }
+
+        const now = Date.now();
+        // Los lectores de código de barra envían caracteres muy rápidamente (<50ms).
+        // Si hay una pausa mayor a 600ms, reiniciamos el buffer para evitar concatenación de palabras.
+        if (now - lastKeyTime > 600) {
+          barcodeBuffer = '';
+        }
+        lastKeyTime = now;
+
+        if (e.key === 'Enter') {
+          if (barcodeBuffer.trim().length > 0) {
+            e.preventDefault();
+            const scannedCode = barcodeBuffer.trim();
+            barcodeBuffer = '';
+            handleBarcodeScanned({ data: scannedCode });
+          }
+        } else if (e.key.length === 1) {
+          barcodeBuffer += e.key;
+        }
+      };
+
+      window.addEventListener('keydown', handleWebKeyDown);
+      return () => {
+        window.removeEventListener('keydown', handleWebKeyDown);
+      };
+    }
+  }, [isFocused, scanned, handleBarcodeScanned]);
 
   // ─── GUARDAR RECOLECCIÓN (COOLDOWN 18 HORAS & SQLITE/SUPABASE) ────────────
   const handleSaveCollection = useCallback(
@@ -287,6 +327,7 @@ export default function QRScannerScreen({ navigation }) {
         style={styles.hiddenInput}
         autoFocus={true}
         showSoftInputOnFocus={false}
+        inputMode={Platform.OS === 'web' ? 'text' : undefined}
         blurOnSubmit={false}
         value={scannerInputValue}
         onChangeText={setScannerInputValue}
@@ -471,6 +512,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 28,
     backgroundColor: THEME.colors.background,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      alignSelf: 'center',
+    }),
   },
   permissionIcon: { fontSize: 52, marginBottom: 14 },
   permissionTitle: {
@@ -509,6 +554,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 10,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+      borderRadius: 12,
+      marginTop: 8,
+    }),
   },
   topInfo: { flex: 1 },
   topTitle: {
@@ -607,6 +659,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
     zIndex: 20,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 600,
+      width: '100%',
+      alignSelf: 'center',
+      left: 'auto',
+      right: 'auto',
+    }),
   },
   gpsLoading: {
     flexDirection: 'row',

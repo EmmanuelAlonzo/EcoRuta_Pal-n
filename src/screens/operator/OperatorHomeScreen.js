@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -205,6 +206,11 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
   },
   badgeRow: {
     flexDirection: 'row',
