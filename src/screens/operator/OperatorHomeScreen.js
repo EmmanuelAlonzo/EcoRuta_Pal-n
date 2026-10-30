@@ -88,9 +88,26 @@ export default function OperatorHomeScreen({ navigation }) {
         </View>
 
         <Text style={styles.welcomeText}>Operario: {profile?.nombre_completo || 'Carlos'}</Text>
-        <Text style={styles.camionText}>
-          Unidad: {profile?.codigo_camion || 'CAM-01'} • {profile?.ruta_asignada || 'Sector Centro Palín'}
-        </Text>
+
+        {/* Tarjeta de Turno Activo */}
+        <View style={styles.shiftCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.shiftCardLabel}>TURNO ASIGNADO (PALÍN)</Text>
+            <Text style={styles.shiftCardUnit}>
+              🚛 {profile?.codigo_camion || 'Sin camión'}
+            </Text>
+            <Text style={styles.shiftCardRoute}>
+              📍 {profile?.ruta_asignada || 'Sin ruta asignada'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.shiftChangeBtn}
+            onPress={() => navigation?.navigate?.('OperatorSetup')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.shiftChangeBtnText}>Cambiar</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* 1. Tarjeta Principal de Sincronización Offline-First */}
         <View style={styles.syncCard}>
@@ -346,5 +363,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: THEME.colors.textSecondary,
     lineHeight: 18,
+  },
+  shiftCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F0F7FF',
+  },
+  shiftCardLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2563EB',
+    letterSpacing: 0.5,
+  },
+  shiftCardUnit: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    marginTop: 2,
+  },
+  shiftCardRoute: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  shiftChangeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#DBEAFE',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+  },
+  shiftChangeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D4ED8',
   },
 });

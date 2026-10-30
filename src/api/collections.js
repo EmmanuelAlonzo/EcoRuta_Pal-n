@@ -81,7 +81,6 @@ export const uploadCollectionRecord = async (record) => {
     operario_id: record.operario_id,
     tipo_material: record.tipo_material,
     peso_kg: parseFloat(record.peso_kg) || 0,
-    puntos_otorgados: parseInt(record.puntos_otorgados, 10) || 0,
     latitud: record.latitud !== null ? parseFloat(record.latitud) : null,
     longitud: record.longitud !== null ? parseFloat(record.longitud) : null,
     fecha_recoleccion: record.fecha_recoleccion,

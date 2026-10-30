@@ -29,7 +29,7 @@ import { checkRecentCollection, uploadCollectionRecord } from '../../api/collect
  * Ambas vías convergen en la misma función de procesamiento:
  * Validación de Cooldown (18 horas) → Botones Ágiles → Guardado SQLite & Supabase.
  */
-export default function QRScannerScreen() {
+export default function QRScannerScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const user = useAuthStore((state) => state.user);
@@ -182,6 +182,7 @@ export default function QRScannerScreen() {
           operario_id: user?.id || null,
           operario_nombre: profile?.nombre_completo || profile?.nombre || 'Operario de Ruta',
           codigo_camion: profile?.codigo_camion || 'CAM-01',
+          ruta_asignada: profile?.ruta_asignada || 'Zona 1',
           tipo_material: separado ? 'separado' : 'no_separado',
           material_nombre: separado ? 'Residuos Separados' : 'Residuos NO Separados',
           peso_kg: 0,
@@ -225,6 +226,25 @@ export default function QRScannerScreen() {
     },
     [isSaving, scannedCitizenId, user?.id, profile, currentCoords]
   );
+
+  // ─── BLOQUEO SI NO SE HA INICIALIZADO EL TURNO (CAMIÓN Y RUTA) ───────────
+  if (!profile?.codigo_camion || !profile?.ruta_asignada) {
+    return (
+      <View style={[styles.centerContainer, { paddingTop: insets.top + 16 }]}>
+        <Text style={styles.permissionIcon}>🚛</Text>
+        <Text style={styles.permissionTitle}>Turno No Inicializado</Text>
+        <Text style={styles.permissionDesc}>
+          Debes confirmar tu código de camión y la ruta asignada en Palín antes de poder utilizar el escáner de campo.
+        </Text>
+        <TouchableOpacity
+          style={styles.permissionButton}
+          onPress={() => navigation?.navigate?.('OperatorSetup')}
+        >
+          <Text style={styles.permissionButtonText}>Configurar Turno Ahora</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // ─── PANTALLA DE PERMISOS ─────────────────────────────────────────────────
   if (!cameraPermission || locationStatus === null) {

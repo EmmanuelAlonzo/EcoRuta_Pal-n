@@ -19,6 +19,8 @@ export const THEME = {
   roles: {
     cliente: '#10B981',
     operario: '#3B82F6',
+    piloto: '#0284C7',
+    supervisor: '#D97706',
     admin: '#8B5CF6',
   },
 };

@@ -51,6 +51,12 @@ export const loginWithEmail = async (email, password) => {
     throw new Error('El usuario no tiene un rol asignado en la tabla perfiles.');
   }
 
+  // 3. Bloqueo de inicio de sesión si la cuenta está suspendida por el administrador
+  if (profile.activo === false) {
+    await supabase.auth.signOut();
+    throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado por la administración municipal.');
+  }
+
   return {
     session: authData.session,
     user,
@@ -105,6 +111,11 @@ export const fetchUserProfile = async (userId) => {
   if (error) {
     console.error('[auth.js] Error al recuperar perfil por ID:', error);
     throw error;
+  }
+
+  if (profile && profile.activo === false) {
+    await supabase.auth.signOut();
+    throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado.');
   }
 
   return profile;

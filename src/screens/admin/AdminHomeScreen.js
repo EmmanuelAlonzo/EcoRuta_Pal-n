@@ -7,11 +7,13 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/useAuthStore';
 import { THEME } from '../../constants/theme';
 import { getGlobalMetrics } from '../../api/admin';
+import { generateAdminReportCSV } from '../../api/reports';
 
 export default function AdminHomeScreen({ navigation }) {
   const profile = useAuthStore((state) => state.profile);
@@ -27,6 +29,26 @@ export default function AdminHomeScreen({ navigation }) {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportReport = async () => {
+    setIsExporting(true);
+    try {
+      const result = await generateAdminReportCSV();
+      Alert.alert(
+        '✅ Reporte Generado',
+        `Se procesaron ${result.totalRecolecciones} recolecciones y ${result.totalCanjes} canjes.\n\nEl archivo CSV está listo para compartirse o abrirse en Microsoft Excel.`
+      );
+    } catch (err) {
+      console.error('[AdminHome] Error al exportar reporte:', err);
+      Alert.alert(
+        'Error al Exportar',
+        err.message || 'Ocurrió un error al generar o compartir el archivo de reporte.'
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const loadMetrics = useCallback(async (isPullToRefresh = false) => {
     if (isPullToRefresh) {
@@ -223,6 +245,40 @@ export default function AdminHomeScreen({ navigation }) {
                 </View>
                 <Text style={styles.routeStatus}>Activa</Text>
               </View>
+            </View>
+
+            {/* 5. Exportación de Reportes Gerenciales (Excel / CSV) */}
+            <View style={styles.exportCard}>
+              <View style={styles.exportHeader}>
+                <View style={styles.exportIconBadge}>
+                  <Text style={styles.exportIcon}>📑</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportTitle}>Reportes Oficiales y Auditoría</Text>
+                  <Text style={styles.exportSubtitle}>
+                    Descarga el consolidado de recolecciones, operarios y canjes para análisis en Excel.
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.exportButton, isExporting && styles.exportButtonDisabled]}
+                onPress={handleExportReport}
+                disabled={isExporting}
+                activeOpacity={0.85}
+              >
+                {isExporting ? (
+                  <View style={styles.buttonLoadingRow}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={styles.exportButtonText}> Generando reporte CSV...</Text>
+                  </View>
+                ) : (
+                  <View style={styles.buttonLoadingRow}>
+                    <Text style={styles.exportButtonIcon}>📊</Text>
+                    <Text style={styles.exportButtonText}>Exportar Reporte Excel / CSV</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
             </View>
           </>
         )}
@@ -499,5 +555,79 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 8,
     marginLeft: 6,
+  },
+  exportCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#F5F3FF',
+    shadowColor: THEME.roles.admin,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  exportHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  exportIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EDE9FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  exportIcon: {
+    fontSize: 22,
+  },
+  exportTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#4C1D95',
+  },
+  exportSubtitle: {
+    fontSize: 12,
+    color: '#6D28D9',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  exportButton: {
+    backgroundColor: THEME.roles.admin,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: THEME.roles.admin,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  exportButtonDisabled: {
+    opacity: 0.7,
+  },
+  buttonLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exportButtonIcon: {
+    fontSize: 18,
+    marginRight: 8,
+  },
+  exportButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

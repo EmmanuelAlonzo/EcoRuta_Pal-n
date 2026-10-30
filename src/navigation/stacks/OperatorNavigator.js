@@ -1,14 +1,22 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import OperatorHomeScreen from '../../screens/operator/OperatorHomeScreen';
 import QRScannerScreen from '../../screens/operator/QRScannerScreen';
+import OperatorSetupScreen from '../../screens/operator/OperatorSetupScreen';
 import PlaceholderTabScreen from '../../screens/common/PlaceholderTabScreen';
 import { THEME } from '../../constants/theme';
+import { startSilentSyncListener } from '../../services/syncManager';
+import { useAuthStore } from '../../store/useAuthStore';
 
+const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-export default function OperatorNavigator() {
+/**
+ * Navegador de pestañas operativas (Mi Ruta, Escáner QR, Bitácora)
+ */
+function OperatorTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
@@ -55,5 +63,49 @@ export default function OperatorNavigator() {
         }}
       />
     </Tab.Navigator>
+  );
+}
+
+/**
+ * Operador Navigator con Restricción de Flujo:
+ * Exige inicializar camión y ruta en OperatorSetupScreen antes de desbloquear el escáner y la ruta.
+ */
+export default function OperatorNavigator() {
+  const profile = useAuthStore((state) => state.profile);
+
+  // El operario tiene el turno habilitado únicamente si confirmó su camión y ruta
+  const isShiftReady = Boolean(
+    profile?.shiftActive && profile?.codigo_camion && profile?.ruta_asignada
+  );
+
+  useEffect(() => {
+    // Activa la sincronización silenciosa en segundo plano durante todo el turno del operario
+    const unsubscribe = startSilentSyncListener();
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        console.log('🛑 [SilentSync] Desactivando listener de red (fin de turno/logout).');
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+        animation: 'fade',
+      }}
+    >
+      {!isShiftReady ? (
+        // Punto de entrada obligatorio: no se puede acceder a las pestañas ni al escáner
+        <Stack.Screen name="OperatorSetup" component={OperatorSetupScreen} />
+      ) : (
+        // Una vez confirmado el turno, se desbloquean las herramientas de campo
+        <>
+          <Stack.Screen name="OperatorTabs" component={OperatorTabs} />
+          <Stack.Screen name="OperatorSetup" component={OperatorSetupScreen} />
+        </>
+      )}
+    </Stack.Navigator>
   );
 }

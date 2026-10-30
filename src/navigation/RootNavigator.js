@@ -8,6 +8,7 @@ import { THEME } from '../constants/theme';
 import LoginScreen from '../screens/auth/LoginScreen';
 import ClientNavigator from './stacks/ClientNavigator';
 import OperatorNavigator from './stacks/OperatorNavigator';
+import SupervisorNavigator from './stacks/SupervisorNavigator';
 import AdminNavigator from './stacks/AdminNavigator';
 
 const Stack = createNativeStackNavigator();
@@ -41,8 +42,12 @@ export default function RootNavigator() {
             <Stack.Screen name="ClientApp" component={ClientNavigator} />
           )}
 
-          {role === ROLES.OPERARIO && (
+          {(role === ROLES.OPERARIO || role === ROLES.PILOTO) && (
             <Stack.Screen name="OperatorApp" component={OperatorNavigator} />
+          )}
+
+          {role === ROLES.SUPERVISOR && (
+            <Stack.Screen name="SupervisorApp" component={SupervisorNavigator} />
           )}
 
           {role === ROLES.ADMIN && (
@@ -52,6 +57,8 @@ export default function RootNavigator() {
           {/* Fallback de seguridad en caso de rol no reconocido */}
           {role !== ROLES.CLIENTE &&
             role !== ROLES.OPERARIO &&
+            role !== ROLES.PILOTO &&
+            role !== ROLES.SUPERVISOR &&
             role !== ROLES.ADMIN && (
               <Stack.Screen name="DefaultClientApp" component={ClientNavigator} />
             )}

@@ -46,6 +46,7 @@ export const initDatabase = async () => {
       operario_id TEXT NOT NULL,
       operario_nombre TEXT,
       codigo_camion TEXT,
+      ruta_asignada TEXT,
       tipo_material TEXT NOT NULL,
       material_nombre TEXT,
       peso_kg REAL DEFAULT 0,
@@ -62,6 +63,11 @@ export const initDatabase = async () => {
 
   try {
     await db.execAsync(createTableQuery);
+    try {
+      await db.execAsync('ALTER TABLE recolecciones_locales ADD COLUMN ruta_asignada TEXT;');
+    } catch {
+      // Columna ya existente
+    }
     console.log('✅ [SQLite] Tabla `recolecciones_locales` lista y verificada.');
   } catch (error) {
     console.error('[SQLite] Error al inicializar tabla:', error);
@@ -85,11 +91,11 @@ export const insertarRecoleccion = async (record) => {
 
   const insertQuery = `
     INSERT INTO recolecciones_locales (
-      id, cliente_id, operario_id, operario_nombre, codigo_camion,
+      id, cliente_id, operario_id, operario_nombre, codigo_camion, ruta_asignada,
       tipo_material, material_nombre, peso_kg, puntos_otorgados,
       latitud, longitud, precision_gps, fecha_recoleccion,
       separado, sincronizado
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0);
   `;
 
   const values = [
@@ -98,6 +104,7 @@ export const insertarRecoleccion = async (record) => {
     record.operario_id,
     record.operario_nombre || null,
     record.codigo_camion || null,
+    record.ruta_asignada || null,
     record.tipo_material,
     record.material_nombre || null,
     record.peso_kg ?? 0,

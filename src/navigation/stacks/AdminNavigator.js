@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import AdminHomeScreen from '../../screens/admin/AdminHomeScreen';
 import ManageRedemptionsScreen from '../../screens/admin/ManageRedemptionsScreen';
+import AdminPersonnelScreen from '../../screens/admin/AdminPersonnelScreen';
 import PlaceholderTabScreen from '../../screens/common/PlaceholderTabScreen';
 import { THEME } from '../../constants/theme';
 
@@ -30,6 +31,14 @@ export default function AdminNavigator() {
         options={{
           tabBarLabel: 'Dashboard',
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>📊</Text>,
+        }}
+      />
+      <Tab.Screen
+        name="AdminPersonnel"
+        component={AdminPersonnelScreen}
+        options={{
+          tabBarLabel: 'Personal',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>👥</Text>,
         }}
       />
       <Tab.Screen
