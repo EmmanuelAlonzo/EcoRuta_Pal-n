@@ -4,6 +4,7 @@
     "slug": "ecoruta-palin",
     "scheme": "ecoruta",
     "version": "1.0.0",
+    "runtimeVersion": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
