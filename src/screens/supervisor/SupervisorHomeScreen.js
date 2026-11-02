@@ -26,15 +26,20 @@ import {
   createRoute,
   updateRoute,
   deleteRoute,
+  getGeoreferencedCollections,
+  PALIN_QUADRANTS,
 } from '../../api/logistics';
+import EcoMap from '../../components/common/EcoMap';
 
 export default function SupervisorHomeScreen({ navigation }) {
   const profile = useAuthStore((state) => state.profile);
   const logout = useAuthStore((state) => state.logout);
 
-  const [activeTab, setActiveTab] = useState('camiones'); // 'camiones' | 'rutas'
+  const [activeTab, setActiveTab] = useState('camiones'); // 'camiones' | 'rutas' | 'mapa'
   const [trucks, setTrucks] = useState([]);
   const [routes, setRoutes] = useState([]);
+  const [geoCollections, setGeoCollections] = useState([]);
+  const [selectedGeoPoint, setSelectedGeoPoint] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -61,12 +66,14 @@ export default function SupervisorHomeScreen({ navigation }) {
     }
 
     try {
-      const [trucksData, routesData] = await Promise.all([
+      const [trucksData, routesData, collectionsData] = await Promise.all([
         getTrucks(false),
         getRoutes(),
+        getGeoreferencedCollections(),
       ]);
       setTrucks(trucksData || []);
       setRoutes(routesData || []);
+      setGeoCollections(collectionsData || []);
     } catch (err) {
       console.error('[SupervisorHome] Error cargando logística:', err);
       Alert.alert('Error', 'No se pudieron consultar los datos de logística en Supabase.');
@@ -244,7 +251,7 @@ export default function SupervisorHomeScreen({ navigation }) {
           Flota Municipal y Rutas Territoriales • Palín
         </Text>
 
-        {/* Pestañas de Alternancia: Camiones vs Rutas */}
+        {/* Pestañas de Alternancia: Camiones vs Rutas vs Mapa */}
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'camiones' && styles.tabButtonActive]}
@@ -257,7 +264,7 @@ export default function SupervisorHomeScreen({ navigation }) {
                 activeTab === 'camiones' && styles.tabButtonTextActive,
               ]}
             >
-              🚛 Camiones ({trucks.length})
+              🚛 Flota ({trucks.length})
             </Text>
           </TouchableOpacity>
 
@@ -275,21 +282,52 @@ export default function SupervisorHomeScreen({ navigation }) {
               📍 Rutas ({routes.length})
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'mapa' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('mapa')}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.tabButtonText,
+                activeTab === 'mapa' && styles.tabButtonTextActive,
+              ]}
+            >
+              🗺️ Dispersión ({geoCollections.length})
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* Botón de Agregar Nuevo Registro */}
+      {/* Botón de Agregar Nuevo Registro o Actualizar Mapa */}
       <View style={styles.actionHeaderBar}>
         <Text style={styles.sectionHeaderTitle}>
-          {activeTab === 'camiones' ? 'Flota de Camiones Recolectores' : 'Catálogo de Rutas Oficiales'}
+          {activeTab === 'camiones'
+            ? 'Flota de Camiones Recolectores'
+            : activeTab === 'rutas'
+            ? 'Catálogo de Rutas Oficiales'
+            : 'Dispersión Cartográfica de Recolecciones'}
         </Text>
         <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => (activeTab === 'camiones' ? handleOpenTruckModal() : handleOpenRouteModal())}
+          style={[styles.addButton, activeTab === 'mapa' && styles.refreshMapButton]}
+          onPress={() => {
+            if (activeTab === 'camiones') {
+              handleOpenTruckModal();
+            } else if (activeTab === 'rutas') {
+              handleOpenRouteModal();
+            } else {
+              loadData(true);
+            }
+          }}
           activeOpacity={0.85}
         >
           <Text style={styles.addButtonText}>
-            {activeTab === 'camiones' ? '+ Nuevo Camión' : '+ Nueva Ruta'}
+            {activeTab === 'camiones'
+              ? '+ Nuevo Camión'
+              : activeTab === 'rutas'
+              ? '+ Nueva Ruta'
+              : '🔄 Actualizar GPS'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -370,7 +408,7 @@ export default function SupervisorHomeScreen({ navigation }) {
             );
           }}
         />
-      ) : (
+      ) : activeTab === 'rutas' ? (
         /* LISTADO DE RUTAS */
         <FlatList
           data={routes}
@@ -425,6 +463,145 @@ export default function SupervisorHomeScreen({ navigation }) {
             </View>
           )}
         />
+      ) : (
+        /* 🗺️ VISTA CARTOGRÁFICA DE DISPERSIÓN GEOGRÁFICA */
+        <ScrollView
+          contentContainerStyle={styles.mapTabContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={() => loadData(true)}
+              colors={[THEME.roles.supervisor]}
+              tintColor={THEME.roles.supervisor}
+            />
+          }
+        >
+          {/* Panel de Estadísticas Territoriales */}
+          <View style={styles.kpiContainer}>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiValue}>{geoCollections.length}</Text>
+              <Text style={styles.kpiLabel}>Puntos GPS</Text>
+            </View>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiValue}>
+                {geoCollections
+                  .reduce((acc, c) => acc + (parseFloat(c.peso_kg) || 0), 0)
+                  .toFixed(1)}
+              </Text>
+              <Text style={styles.kpiLabel}>Kg Registrados</Text>
+            </View>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiValue}>{trucks.length}</Text>
+              <Text style={styles.kpiLabel}>Camiones Activos</Text>
+            </View>
+          </View>
+
+          {/* Tarjeta del Mapa */}
+          <View style={styles.mapWrapperCard}>
+            <View style={styles.mapCardHeader}>
+              <View>
+                <Text style={styles.mapCardBadge}>SUPABASE GEOSPATIAL • PALÍN</Text>
+                <Text style={styles.mapCardTitle}>Dispersión de Recolecciones</Text>
+              </View>
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveBadgeText}>En Vivo</Text>
+              </View>
+            </View>
+            <Text style={styles.mapCardSubtitle}>
+              Puntos georreferenciados capturados por las cámaras y GPS de los operarios en campo.
+            </Text>
+
+            <EcoMap
+              centerCoordinate={{
+                latitude: selectedGeoPoint?.latitud || 14.4042,
+                longitude: selectedGeoPoint?.longitud || -90.6978,
+              }}
+              markers={geoCollections.map((col, idx) => ({
+                id: col.id || `col-${idx}`,
+                latitude: col.latitud,
+                longitude: col.longitud,
+                title: `📦 ${col.material_tipo?.toUpperCase() || 'RECICLAJE'} (${col.peso_kg || 0} kg)`,
+                description: `${col.usuarios?.nombre_completo || 'Cliente'} • ${col.usuarios?.direccion || 'Palín'}`,
+                type: 'recoleccion',
+              }))}
+              height={320}
+              zoomLevel={14}
+              showUserLocation={false}
+            />
+
+            {/* Leyenda del Mapa */}
+            <View style={styles.mapLegendRow}>
+              <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>📦</Text>
+                <Text style={styles.legendText}>Punto de Recolección</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>📍</Text>
+                <Text style={styles.legendText}>Cuadrante Municipal</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Detalle del Punto Seleccionado o Lista Reciente */}
+          <View style={styles.collectionListSection}>
+            <Text style={styles.collectionListTitle}>
+              Registro de Puntos Georreferenciados ({geoCollections.length})
+            </Text>
+            <Text style={styles.collectionListSub}>
+              Toca un punto para centrar el mapa o inspeccionar la coordenada capturada.
+            </Text>
+
+            {geoCollections.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyIcon}>📍</Text>
+                <Text style={styles.emptyTitle}>Sin puntos GPS registrados</Text>
+                <Text style={styles.emptyDesc}>
+                  Las recolecciones escaneadas con coordenadas aparecerán automáticamente en este mapa.
+                </Text>
+              </View>
+            ) : (
+              geoCollections.slice(0, 15).map((col, idx) => {
+                const isSelected = selectedGeoPoint?.id === col.id;
+                return (
+                  <TouchableOpacity
+                    key={col.id || idx}
+                    style={[styles.geoItemCard, isSelected && styles.geoItemCardActive]}
+                    onPress={() => setSelectedGeoPoint(col)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.geoItemTop}>
+                      <View style={styles.geoMaterialBadge}>
+                        <Text style={styles.geoMaterialText}>
+                          📦 {col.material_tipo?.toUpperCase() || 'MATERIAL'}
+                        </Text>
+                      </View>
+                      <Text style={styles.geoWeightText}>{col.peso_kg || 0} kg</Text>
+                    </View>
+
+                    <Text style={styles.geoClientName}>
+                      {col.usuarios?.nombre_completo || 'Vecino de Palín'}
+                    </Text>
+                    <Text style={styles.geoClientAddress}>
+                      {col.usuarios?.direccion || 'Sector Palín, Escuintla'}
+                    </Text>
+
+                    <View style={styles.geoMetaRow}>
+                      <Text style={styles.geoCoordsText}>
+                        🌐 Lat: {col.latitud?.toFixed(4)}, Lng: {col.longitud?.toFixed(4)}
+                      </Text>
+                      <Text style={styles.geoDateText}>
+                        {col.fecha_hora
+                          ? new Date(col.fecha_hora).toLocaleDateString()
+                          : 'Reciente'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        </ScrollView>
       )}
 
       {/* ─── MODAL CAMIÓN ─────────────────────────────────────────────────── */}
@@ -910,5 +1087,209 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  refreshMapButton: {
+    backgroundColor: '#0F172A',
+  },
+  mapTabContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+      alignSelf: 'center',
+    }),
+  },
+  kpiContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  kpiCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.textSecondary,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  mapWrapperCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  mapCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  mapCardBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6366F1',
+    letterSpacing: 0.5,
+  },
+  mapCardTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    marginTop: 2,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#16A34A',
+    marginRight: 5,
+  },
+  liveBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  mapCardSubtitle: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  mapLegendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  legendIcon: {
+    fontSize: 14,
+    marginRight: 6,
+  },
+  legendText: {
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    fontWeight: '600',
+  },
+  collectionListSection: {
+    marginTop: 4,
+  },
+  collectionListTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  collectionListSub: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    marginTop: 2,
+    marginBottom: 12,
+  },
+  geoItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  geoItemCardActive: {
+    borderColor: '#6366F1',
+    borderWidth: 1.5,
+    backgroundColor: '#F5F3FF',
+  },
+  geoItemTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  geoMaterialBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  geoMaterialText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  geoWeightText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  geoClientName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+  },
+  geoClientAddress: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    marginTop: 2,
+  },
+  geoMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    marginTop: 8,
+    paddingTop: 8,
+  },
+  geoCoordsText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  geoDateText: {
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    fontWeight: '600',
   },
 });

@@ -17,22 +17,6 @@ import { supabase } from '../../services/supabase';
 import { THEME } from '../../constants/theme';
 import { getTrucks, getRoutes } from '../../api/logistics';
 
-// Catálogo de respaldo (fallback) en caso de tablas vacías o desconexión temporal
-const DEFAULT_CAMIONES = [
-  { id: '1', codigo: 'CAM-01', placa: 'C-821BKN', descripcion: 'Compactador Principal (Centro y Comercio)', icon: '🚛' },
-  { id: '2', codigo: 'CAM-02', placa: 'C-714BLP', descripcion: 'Recolector Selectivo (Reciclaje y Secos)', icon: '♻️' },
-  { id: '3', codigo: 'CAM-03', placa: 'C-552BMQ', descripcion: 'Unidad Liviana (Sectores Angostos y Callejones)', icon: '🛻' },
-  { id: '4', codigo: 'CAM-04', placa: 'C-319BNR', descripcion: 'Unidad Periférica (Aldeas y Caseríos)', icon: '🚚' },
-];
-
-const DEFAULT_RUTAS = [
-  { id: '1', nombre: 'Zona 1 — Casco Urbano y Mercado Central', descripcion: 'Sector 1: Área comercial y cuadrante céntrico' },
-  { id: '2', nombre: 'Zona 2 — Barrio San Pedro y San José', descripcion: 'Sector 2: Cuadrante este y áreas residenciales' },
-  { id: '3', nombre: 'Zona 3 — Col. María Matos y San Francisco', descripcion: 'Sector 3: Cuadrante norte y colonias principales' },
-  { id: '4', nombre: 'Zona 4 — Valle de las Flores y El Castaño', descripcion: 'Sector 4: Sectores residenciales del sur' },
-  { id: '5', nombre: 'Zona 5 — Rincón de la Cruz y Periférico Sur', descripcion: 'Sector 5: Comunidades y perímetro exterior' },
-];
-
 export default function OperatorSetupScreen({ navigation }) {
   const user = useAuthStore((state) => state.user);
   const profile = useAuthStore((state) => state.profile);
@@ -62,30 +46,32 @@ export default function OperatorSetupScreen({ navigation }) {
         getRoutes(),     // SELECT * FROM rutas
       ]);
 
-      const finalTrucks = remoteTrucks && remoteTrucks.length > 0 ? remoteTrucks : DEFAULT_CAMIONES;
-      const finalRoutes = remoteRoutes && remoteRoutes.length > 0 ? remoteRoutes : DEFAULT_RUTAS;
+      const availableTrucks = remoteTrucks || [];
+      const availableRoutes = remoteRoutes || [];
 
-      setTrucksList(finalTrucks);
-      setRoutesList(finalRoutes);
+      setTrucksList(availableTrucks);
+      setRoutesList(availableRoutes);
 
       // Si el perfil ya tiene camión y ruta pre-asignados por el supervisor, mantenerlos seleccionados
       if (profile?.codigo_camion) {
         setSelectedTruck(profile.codigo_camion);
-      } else if (!selectedTruck && finalTrucks.length > 0) {
-        setSelectedTruck(finalTrucks[0].codigo);
+      } else if (!selectedTruck && availableTrucks.length > 0) {
+        setSelectedTruck(availableTrucks[0].codigo);
       }
 
       if (profile?.ruta_asignada) {
         setSelectedRoute(profile.ruta_asignada);
-      } else if (!selectedRoute && finalRoutes.length > 0) {
-        setSelectedRoute(finalRoutes[0].nombre);
+      } else if (!selectedRoute && availableRoutes.length > 0) {
+        setSelectedRoute(availableRoutes[0].nombre);
       }
     } catch (err) {
-      console.warn('[OperatorSetup] Fallo al cargar catálogo remoto, aplicando fallback local:', err.message);
-      setTrucksList(DEFAULT_CAMIONES);
-      setRoutesList(DEFAULT_RUTAS);
-      if (!selectedTruck) setSelectedTruck(DEFAULT_CAMIONES[0].codigo);
-      if (!selectedRoute) setSelectedRoute(DEFAULT_RUTAS[0].nombre);
+      console.error('[OperatorSetup] Error al cargar catálogo de logística desde Supabase:', err);
+      setTrucksList([]);
+      setRoutesList([]);
+      Alert.alert(
+        'Error de Conexión',
+        'No se pudo consultar el catálogo de camiones y rutas desde Supabase. Por favor desliza hacia abajo para reintentar.'
+      );
     } finally {
       setIsLoadingCatalog(false);
       setIsRefreshing(false);
@@ -257,44 +243,52 @@ export default function OperatorSetupScreen({ navigation }) {
               </Text>
 
               <View style={styles.optionsGrid}>
-                {trucksList.map((camion) => {
-                  const isSelected = selectedTruck === camion.codigo;
-                  return (
-                    <TouchableOpacity
-                      key={camion.id?.toString() || camion.codigo}
-                      style={[
-                        styles.optionCard,
-                        isSelected && styles.optionCardSelected,
-                      ]}
-                      onPress={() => setSelectedTruck(camion.codigo)}
-                      activeOpacity={0.85}
-                    >
-                      <View style={styles.optionCardHeader}>
-                        <Text style={styles.truckIcon}>{camion.icon || '🚛'}</Text>
-                        <Text
-                          style={[
-                            styles.truckCode,
-                            isSelected && styles.truckCodeSelected,
-                          ]}
-                        >
-                          {camion.codigo}
-                        </Text>
-                        <View
-                          style={[
-                            styles.radioIndicator,
-                            isSelected && styles.radioIndicatorSelected,
-                          ]}
-                        >
-                          {isSelected && <View style={styles.radioInner} />}
+                {trucksList.length === 0 ? (
+                  <View style={styles.emptyBox}>
+                    <Text style={styles.emptyBoxText}>
+                      No hay camiones activos registrados en Supabase. Contacta al supervisor de logística.
+                    </Text>
+                  </View>
+                ) : (
+                  trucksList.map((camion) => {
+                    const isSelected = selectedTruck === camion.codigo;
+                    return (
+                      <TouchableOpacity
+                        key={camion.id?.toString() || camion.codigo}
+                        style={[
+                          styles.optionCard,
+                          isSelected && styles.optionCardSelected,
+                        ]}
+                        onPress={() => setSelectedTruck(camion.codigo)}
+                        activeOpacity={0.85}
+                      >
+                        <View style={styles.optionCardHeader}>
+                          <Text style={styles.truckIcon}>{camion.icon || '🚛'}</Text>
+                          <Text
+                            style={[
+                              styles.truckCode,
+                              isSelected && styles.truckCodeSelected,
+                            ]}
+                          >
+                            {camion.codigo}
+                          </Text>
+                          <View
+                            style={[
+                              styles.radioIndicator,
+                              isSelected && styles.radioIndicatorSelected,
+                            ]}
+                          >
+                            {isSelected && <View style={styles.radioInner} />}
+                          </View>
                         </View>
-                      </View>
-                      <Text style={styles.truckDesc}>
-                        Placa: {camion.placa || 'En circulación'}{' '}
-                        {camion.descripcion ? `• ${camion.descripcion}` : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                        <Text style={styles.truckDesc}>
+                          Placa: {camion.placa || 'En circulación'}{' '}
+                          {camion.descripcion ? `• ${camion.descripcion}` : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
               </View>
             </View>
 
@@ -309,57 +303,65 @@ export default function OperatorSetupScreen({ navigation }) {
               </Text>
 
               <View style={styles.optionsList}>
-                {routesList.map((ruta) => {
-                  const isSelected = selectedRoute === ruta.nombre;
-                  return (
-                    <TouchableOpacity
-                      key={ruta.id?.toString() || ruta.nombre}
-                      style={[
-                        styles.routeCard,
-                        isSelected && styles.routeCardSelected,
-                      ]}
-                      onPress={() => setSelectedRoute(ruta.nombre)}
-                      activeOpacity={0.85}
-                    >
-                      <View
+                {routesList.length === 0 ? (
+                  <View style={styles.emptyBox}>
+                    <Text style={styles.emptyBoxText}>
+                      No hay rutas registradas en Supabase. Contacta al supervisor de logística.
+                    </Text>
+                  </View>
+                ) : (
+                  routesList.map((ruta) => {
+                    const isSelected = selectedRoute === ruta.nombre;
+                    return (
+                      <TouchableOpacity
+                        key={ruta.id?.toString() || ruta.nombre}
                         style={[
-                          styles.routeBadge,
-                          isSelected && styles.routeBadgeSelected,
+                          styles.routeCard,
+                          isSelected && styles.routeCardSelected,
                         ]}
+                        onPress={() => setSelectedRoute(ruta.nombre)}
+                        activeOpacity={0.85}
                       >
-                        <Text
+                        <View
                           style={[
-                            styles.routeBadgeText,
-                            isSelected && styles.routeBadgeTextSelected,
+                            styles.routeBadge,
+                            isSelected && styles.routeBadgeSelected,
                           ]}
                         >
-                          📍
-                        </Text>
-                      </View>
-                      <View style={styles.routeDetails}>
-                        <Text
+                          <Text
+                            style={[
+                              styles.routeBadgeText,
+                              isSelected && styles.routeBadgeTextSelected,
+                            ]}
+                          >
+                            📍
+                          </Text>
+                        </View>
+                        <View style={styles.routeDetails}>
+                          <Text
+                            style={[
+                              styles.routeName,
+                              isSelected && styles.routeNameSelected,
+                            ]}
+                          >
+                            {ruta.nombre}
+                          </Text>
+                          {ruta.descripcion ? (
+                            <Text style={styles.routeDescText}>{ruta.descripcion}</Text>
+                          ) : null}
+                        </View>
+                        <View
                           style={[
-                            styles.routeName,
-                            isSelected && styles.routeNameSelected,
+                            styles.radioIndicator,
+                            isSelected && styles.radioIndicatorSelected,
                           ]}
                         >
-                          {ruta.nombre}
-                        </Text>
-                        {ruta.descripcion ? (
-                          <Text style={styles.routeDescText}>{ruta.descripcion}</Text>
-                        ) : null}
-                      </View>
-                      <View
-                        style={[
-                          styles.radioIndicator,
-                          isSelected && styles.radioIndicatorSelected,
-                        ]}
-                      >
-                        {isSelected && <View style={styles.radioInner} />}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
+                          {isSelected && <View style={styles.radioInner} />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
               </View>
             </View>
           </>
@@ -763,5 +765,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 15,
+  },
+  emptyBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyBoxText: {
+    fontSize: 13,
+    color: THEME.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

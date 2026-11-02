@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/useAuthStore';
 import { THEME } from '../../constants/theme';
 import { getGlobalMetrics } from '../../api/admin';
+import { getRoutes } from '../../api/logistics';
 import { generateAdminReportCSV } from '../../api/reports';
 
 export default function AdminHomeScreen({ navigation }) {
@@ -28,6 +29,7 @@ export default function AdminHomeScreen({ navigation }) {
     totalClientes: 0,
     materialStats: { plastico: 0, carton: 0, aluminio: 0, vidrio: 0, mixto: 0 },
   });
+  const [routes, setRoutes] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -59,8 +61,15 @@ export default function AdminHomeScreen({ navigation }) {
     }
 
     try {
-      const data = await getGlobalMetrics();
+      const [data, remoteRoutes] = await Promise.all([
+        getGlobalMetrics(),
+        getRoutes().catch((e) => {
+          console.warn('[AdminHome] Error al consultar rutas de Supabase:', e);
+          return [];
+        }),
+      ]);
       setMetrics(data);
+      setRoutes(remoteRoutes || []);
     } catch (err) {
       console.warn('[AdminHome] Error al cargar métricas:', err);
     } finally {
@@ -229,23 +238,29 @@ export default function AdminHomeScreen({ navigation }) {
             {/* 4. Rutas y Monitoreo Municipal */}
             <View style={styles.routesCard}>
               <Text style={styles.routesTitle}>🚛 Rutas de Recolección en Operación</Text>
-              <View style={styles.routeItem}>
-                <Text style={styles.routeBullet}>🟢</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.routeName}>Ruta Verde Norte (Zona 1 Palín)</Text>
-                  <Text style={styles.routeSub}>Barrio San José y San Pedro • Unidad CAM-01</Text>
+              {routes.length === 0 ? (
+                <View style={styles.emptyRoutesBox}>
+                  <Text style={styles.emptyRoutesText}>
+                    No hay rutas de recolección registradas en Supabase.
+                  </Text>
                 </View>
-                <Text style={styles.routeStatus}>Activa</Text>
-              </View>
-
-              <View style={[styles.routeItem, { marginTop: 8 }]}>
-                <Text style={styles.routeBullet}>🟢</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.routeName}>Ruta Verde Sur (Zona 2 El Calvario)</Text>
-                  <Text style={styles.routeSub}>Sector El Mirador y Periférico • Unidad CAM-02</Text>
-                </View>
-                <Text style={styles.routeStatus}>Activa</Text>
-              </View>
+              ) : (
+                routes.map((route, idx) => (
+                  <View
+                    key={route.id?.toString() || idx}
+                    style={[styles.routeItem, idx > 0 && { marginTop: 8 }]}
+                  >
+                    <Text style={styles.routeBullet}>🟢</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.routeName}>{route.nombre}</Text>
+                      <Text style={styles.routeSub}>
+                        {route.descripcion || 'Sector territorial de recolección en Palín'}
+                      </Text>
+                    </View>
+                    <Text style={styles.routeStatus}>Activa</Text>
+                  </View>
+                ))
+              )}
             </View>
 
             {/* 5. Exportación de Reportes Gerenciales (Excel / CSV) */}
@@ -635,5 +650,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  emptyRoutesBox: {
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyRoutesText: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    textAlign: 'center',
   },
 });

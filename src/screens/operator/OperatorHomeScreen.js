@@ -10,10 +10,14 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { useAuthStore } from '../../store/useAuthStore';
 import { THEME } from '../../constants/theme';
 import { obtenerConteoPendientes } from '../../services/sqlite/database';
 import { sincronizarPendientes } from '../../services/syncManager';
+import { getRouteClients, PALIN_QUADRANTS } from '../../api/logistics';
+import { openExternalNavigation } from '../../utils/navigationLauncher';
+import EcoMap from '../../components/common/EcoMap';
 
 export default function OperatorHomeScreen({ navigation }) {
   const profile = useAuthStore((state) => state.profile);
@@ -21,6 +25,16 @@ export default function OperatorHomeScreen({ navigation }) {
 
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Estados para Cabina del Piloto y Cartografía
+  const [truckLocation, setTruckLocation] = useState({
+    latitude: 14.4042,
+    longitude: -90.6978,
+  });
+  const [routeClients, setRouteClients] = useState([]);
+  const [isLoadingClients, setIsLoadingClients] = useState(false);
+  const [selectedDestination, setSelectedDestination] = useState(null);
+  const [hasGps, setHasGps] = useState(false);
 
   // Cargar conteo de recolecciones offline pendientes
   const loadPendingCount = async () => {
@@ -32,14 +46,58 @@ export default function OperatorHomeScreen({ navigation }) {
     }
   };
 
+  // Obtener ubicación GPS actual del camión
+  const fetchTruckGps = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        setHasGps(true);
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (position?.coords) {
+          setTruckLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        }
+      } else {
+        setHasGps(false);
+      }
+    } catch (err) {
+      console.warn('[OperatorHome] Error obteniendo GPS:', err);
+    }
+  };
+
+  // Cargar viviendas asignadas a la ruta desde Supabase
+  const loadRouteClients = async () => {
+    if (!profile?.ruta_asignada) return;
+    setIsLoadingClients(true);
+    try {
+      const clients = await getRouteClients(profile.ruta_asignada);
+      setRouteClients(clients);
+      if (clients.length > 0 && !selectedDestination) {
+        setSelectedDestination(clients[0]);
+      }
+    } catch (err) {
+      console.warn('[OperatorHome] Error cargando viviendas de ruta:', err);
+    } finally {
+      setIsLoadingClients(false);
+    }
+  };
+
   useEffect(() => {
     loadPendingCount();
-    // Actualizar conteo cada vez que la pestaña toma el foco (ej. tras escanear un QR)
+    fetchTruckGps();
+    loadRouteClients();
+
     const unsubscribe = navigation?.addListener?.('focus', () => {
       loadPendingCount();
+      fetchTruckGps();
+      loadRouteClients();
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, profile?.ruta_asignada]);
 
   // Ejecutar proceso de sincronización con Supabase
   const handleSync = async () => {
@@ -75,6 +133,43 @@ export default function OperatorHomeScreen({ navigation }) {
     }
   };
 
+  // Disparar navegación dinámica a Waze / Google Maps
+  const handleStartNavigation = () => {
+    // Si hay una vivienda seleccionada, usamos sus coordenadas; si no, el primer cliente o centro de cuadrante
+    const target = selectedDestination || routeClients[0] || {
+      latitud: PALIN_QUADRANTS['Centro Palín'].latitude,
+      longitud: PALIN_QUADRANTS['Centro Palín'].longitude,
+      nombre_completo: 'Palín Centro',
+      direccion: profile?.ruta_asignada || 'Sector Asignado',
+    };
+
+    openExternalNavigation({
+      latitude: target.latitud,
+      longitude: target.longitud,
+      label: `${target.nombre_completo || 'Punto de Recolección'} - ${target.direccion || 'Palín'}`,
+    });
+  };
+
+  // Marcadores combinados para el mapa: Camión actual + Viviendas de la ruta
+  const mapMarkers = [
+    {
+      id: 'truck-current',
+      latitude: truckLocation.latitude,
+      longitude: truckLocation.longitude,
+      title: `🚛 ${profile?.codigo_camion || 'Unidad de Recolección'}`,
+      description: `Piloto: ${profile?.nombre_completo || 'Operario'} • Posición actual`,
+      type: 'camion',
+    },
+    ...routeClients.map((client, idx) => ({
+      id: client.id || `client-${idx}`,
+      latitude: client.latitud,
+      longitude: client.longitud,
+      title: `🏠 ${client.nombre_completo || 'Vivienda'}`,
+      description: `${client.direccion || 'Sector Palín'} • ${client.telefono || 'Sin teléfono'}`,
+      type: 'vivienda',
+    })),
+  ];
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -107,6 +202,95 @@ export default function OperatorHomeScreen({ navigation }) {
             activeOpacity={0.8}
           >
             <Text style={styles.shiftChangeBtnText}>Cambiar</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 🗺️ CABINA DEL PILOTO: MAPA CARTOGRÁFICO Y RUTEO DINÁMICO */}
+        <View style={styles.pilotCabinCard}>
+          <View style={styles.pilotCabinHeader}>
+            <View>
+              <Text style={styles.pilotCabinBadge}>CABINA DEL PILOTO • GPS EN VIVO</Text>
+              <Text style={styles.pilotCabinTitle}>Mapa de Ruta y Cuadrantes</Text>
+            </View>
+            <View style={styles.gpsIndicator}>
+              <View style={[styles.gpsDot, hasGps ? styles.gpsDotActive : styles.gpsDotInactive]} />
+              <Text style={styles.gpsText}>{hasGps ? 'GPS Fijado' : 'GPS Estimado'}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.pilotCabinSubtitle}>
+            Ubicación en tiempo real de la unidad y {routeClients.length} viviendas georreferenciadas en {profile?.ruta_asignada || 'tu sector'}.
+          </Text>
+
+          {/* Componente Universal de Mapa */}
+          <EcoMap
+            centerCoordinate={truckLocation}
+            markers={mapMarkers}
+            height={260}
+            zoomLevel={15}
+            showUserLocation={false}
+          />
+
+          {/* Selector de Destino Siguiente */}
+          <View style={styles.destinationBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.destinationLabel}>PRÓXIMO DESTINO / CUADRANTE:</Text>
+              <Text style={styles.destinationName} numberOfLines={1}>
+                {selectedDestination?.nombre_completo
+                  ? `🏠 ${selectedDestination.nombre_completo}`
+                  : `📍 ${profile?.ruta_asignada || 'Cuadrante Central de Palín'}`}
+              </Text>
+              <Text style={styles.destinationAddress} numberOfLines={1}>
+                {selectedDestination?.direccion || 'Vía principal hacia siguiente sector'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Carrusel rápido de viviendas de la ruta */}
+          {routeClients.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.houseChipsScroll}
+            >
+              {routeClients.map((client, index) => {
+                const isSelected = selectedDestination?.id === client.id;
+                return (
+                  <TouchableOpacity
+                    key={client.id || index}
+                    style={[styles.houseChip, isSelected && styles.houseChipActive]}
+                    onPress={() => setSelectedDestination(client)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.houseChipIcon, isSelected && styles.houseChipIconActive]}>
+                      🏠
+                    </Text>
+                    <Text
+                      style={[styles.houseChipText, isSelected && styles.houseChipTextActive]}
+                      numberOfLines={1}
+                    >
+                      {client.nombre_completo?.split(' ')[0] || `Casa #${index + 1}`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {/* Botón Flotante / Destacado de Ruteo Dinámico */}
+          <TouchableOpacity
+            style={styles.navActionButton}
+            onPress={handleStartNavigation}
+            activeOpacity={0.85}
+          >
+            <View style={styles.navButtonIconCircle}>
+              <Text style={styles.navButtonIcon}>🧭</Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.navButtonTitle}>Iniciar Ruteo Dinámico</Text>
+              <Text style={styles.navButtonSub}>Abrir en Waze o Google Maps con tráfico real</Text>
+            </View>
+            <Text style={styles.navButtonArrow}>➔</Text>
           </TouchableOpacity>
         </View>
 
@@ -171,7 +355,7 @@ export default function OperatorHomeScreen({ navigation }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.scannerHighlightTitle}>📷 Iniciar Escaneo QR</Text>
               <Text style={styles.scannerHighlightDesc}>
-                Apunta la cámara al QR del vecino, captura GPS y guarda el pesaje en SQLite.
+                Apunta la cámara al QR del vecino, valida antifraude y captura pesaje.
               </Text>
             </View>
             <View style={styles.scannerArrowBadge}>
@@ -180,14 +364,7 @@ export default function OperatorHomeScreen({ navigation }) {
           </View>
         </TouchableOpacity>
 
-        {/* 3. Tarjeta Informativa de Ruta */}
-        <View style={styles.actionCard}>
-          <Text style={styles.actionTitle}>🗺️ Ruta Asignada</Text>
-          <Text style={styles.actionDesc}>
-            Palín Zona 1 y Zona 2 (Barrio San Pedro, El Calvario y San José).
-          </Text>
-        </View>
-
+        {/* 3. Tarjeta Informativa de Materiales */}
         <View style={styles.actionCard}>
           <Text style={styles.actionTitle}>⚖️ Materiales Admitidos</Text>
           <Text style={styles.actionDesc}>
@@ -413,5 +590,173 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#1D4ED8',
+  },
+  // Cabina del Piloto Card & Map Styles
+  pilotCabinCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  pilotCabinHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  pilotCabinBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2563EB',
+    letterSpacing: 0.5,
+  },
+  pilotCabinTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    marginTop: 2,
+  },
+  gpsIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  gpsDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  gpsDotActive: {
+    backgroundColor: '#10B981',
+  },
+  gpsDotInactive: {
+    backgroundColor: '#F59E0B',
+  },
+  gpsText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.textSecondary,
+  },
+  pilotCabinSubtitle: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  destinationBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#3B82F6',
+  },
+  destinationLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  destinationName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    marginTop: 2,
+  },
+  destinationAddress: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    marginTop: 2,
+  },
+  houseChipsScroll: {
+    paddingVertical: 10,
+    gap: 8,
+  },
+  houseChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  houseChipActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
+  },
+  houseChipIcon: {
+    fontSize: 12,
+    marginRight: 5,
+  },
+  houseChipIconActive: {
+    transform: [{ scale: 1.1 }],
+  },
+  houseChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.colors.textSecondary,
+    maxWidth: 120,
+  },
+  houseChipTextActive: {
+    color: '#1D4ED8',
+    fontWeight: '800',
+  },
+  navActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  navButtonIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  navButtonIcon: {
+    fontSize: 20,
+  },
+  navButtonTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  navButtonSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  navButtonArrow: {
+    fontSize: 18,
+    color: '#38BDF8',
+    fontWeight: '800',
+    marginLeft: 6,
   },
 });

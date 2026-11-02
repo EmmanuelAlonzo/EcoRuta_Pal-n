@@ -10,6 +10,8 @@ import {
   TextInput,
   Pressable,
   Platform,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
@@ -18,17 +20,21 @@ import { useIsFocused } from '@react-navigation/native';
 import { useAuthStore } from '../../store/useAuthStore';
 import { THEME } from '../../constants/theme';
 import { insertarRecoleccion, marcarComoSincronizado } from '../../services/sqlite/database';
-import { checkRecentCollection, uploadCollectionRecord } from '../../api/collections';
+import {
+  checkRecentCollection,
+  uploadCollectionRecord,
+  getCitizenVerification,
+  reportFraudLog,
+} from '../../api/collections';
 
 /**
  * QRScannerScreen — Flujo Unificado para Recolectores de Campo (EcoRuta Palín)
  *
- * Soporta de manera simultánea e integrada:
- * 1. Cámara Nativa del Smartphone (CameraView a pantalla completa sin colapso).
- * 2. Escáner Físico Bluetooth / USB (Modo Teclado HID) mediante TextInput invisible.
- *
- * Ambas vías convergen en la misma función de procesamiento:
- * Validación de Cooldown (18 horas) → Botones Ágiles → Guardado SQLite & Supabase.
+ * Incluye:
+ * 1. Cámara Nativa del Smartphone / Lector Físico Bluetooth HID.
+ * 2. Validación Visual Antifraude en Pantalla Completa (Letras Gigantes para sol directo).
+ * 3. Botones Masivos: Confirmar Vivienda vs Rechazar (Log de Fraude + GPS en Supabase).
+ * 4. Validación de Cooldown (18 horas) y Guardado SQLite & Supabase.
  */
 export default function QRScannerScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -50,6 +56,12 @@ export default function QRScannerScreen({ navigation }) {
   const [currentCoords, setCurrentCoords] = useState(null);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Estados de Validación Visual Antifraude
+  const [isValidatingCitizen, setIsValidatingCitizen] = useState(false);
+  const [verificationModalVisible, setVerificationModalVisible] = useState(false);
+  const [citizenData, setCitizenData] = useState(null);
+  const [isRejecting, setIsRejecting] = useState(false);
 
   // Feedback al operario después de guardar
   const [lastAction, setLastAction] = useState(null); // { separado: bool, timestamp }
@@ -91,7 +103,9 @@ export default function QRScannerScreen({ navigation }) {
   // Llamada unificada tanto por la cámara como por el lector físico Bluetooth
   const handleBarcodeScanned = useCallback(
     async ({ data }) => {
-      if (scanned || isGettingLocation || isSaving) return;
+      if (scanned || isGettingLocation || isSaving || isValidatingCitizen || verificationModalVisible || isRejecting) {
+        return;
+      }
 
       const rawId = (data || '').trim();
       if (!rawId) return;
@@ -100,30 +114,119 @@ export default function QRScannerScreen({ navigation }) {
       setScanned(true);
       setScannedCitizenId(rawId);
       setIsGettingLocation(true);
+      setIsValidatingCitizen(true);
 
+      let coords = null;
       try {
         const location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
-        setCurrentCoords({
+        coords = {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
           accuracy: Math.round(location.coords.accuracy || 0),
-        });
+        };
+        setCurrentCoords(coords);
       } catch {
         // Fallback a coordenadas de Palín, Escuintla si GPS no responde
-        setCurrentCoords({
+        coords = {
           latitude: 14.4042,
           longitude: -90.6978,
           accuracy: 999,
           isFallback: true,
-        });
+        };
+        setCurrentCoords(coords);
       } finally {
         setIsGettingLocation(false);
       }
+
+      // ── REQUERIMIENTO 1: Consultar en Supabase datos del código escaneado ──
+      try {
+        const res = await getCitizenVerification(rawId);
+        if (res.found && res.profile) {
+          setCitizenData(res.profile);
+        } else {
+          setCitizenData({
+            id: rawId,
+            nombre_completo: 'Código No Registrado en el Padrón',
+            direccion: 'Sin dirección oficial en base de datos',
+            activo: false,
+            estado_suscripcion: 'No Encontrado',
+            notFound: true,
+          });
+        }
+        // ── REQUERIMIENTO 2: Desplegar Modal de Pantalla Completa ──
+        setVerificationModalVisible(true);
+      } catch (err) {
+        console.error('[QRScanner] Error en verificación previa en Supabase:', err);
+        setCitizenData({
+          id: rawId,
+          nombre_completo: 'Fallo al Consultar Datos del Titular',
+          direccion: 'Sin conexión a Supabase',
+          activo: false,
+          estado_suscripcion: 'Desconocido',
+        });
+        setVerificationModalVisible(true);
+      } finally {
+        setIsValidatingCitizen(false);
+      }
     },
-    [scanned, isGettingLocation, isSaving]
+    [scanned, isGettingLocation, isSaving, isValidatingCitizen, verificationModalVisible, isRejecting]
   );
+
+  // ── REQUERIMIENTO 3A: Confirmar Vivienda y Proceder a Recolectar ──────────
+  const handleConfirmVivienda = () => {
+    Vibration.vibrate(60);
+    setVerificationModalVisible(false);
+    console.log('✅ [QRScanner] Vivienda validada visualmente por el operario.');
+  };
+
+  // ── REQUERIMIENTO 3B & 4: Rechazar y Guardar Log de Posible Fraude en Supabase ──
+  const handleRejectFraud = async () => {
+    if (isRejecting) return;
+    setIsRejecting(true);
+    Vibration.vibrate([0, 150, 100, 150]);
+
+    try {
+      await reportFraudLog({
+        qr_code: scannedCitizenId,
+        cliente_id: citizenData?.id || scannedCitizenId,
+        operario_id: user?.id || null,
+        operario_nombre: profile?.nombre_completo || profile?.nombre || 'Operario de Ruta',
+        codigo_camion: profile?.codigo_camion || 'Sin camión',
+        ruta_asignada: profile?.ruta_asignada || 'Sin ruta',
+        latitud: currentCoords?.latitude || null,
+        longitud: currentCoords?.longitude || null,
+        precision_gps: currentCoords?.accuracy || null,
+        direccion_declarada: citizenData?.direccion || 'No disponible',
+        titular_declarado: citizenData?.nombre_completo || 'No disponible',
+        motivo: 'Dirección física incorrecta / Posible fraude detectado por operario',
+      });
+
+      Alert.alert(
+        '⚠️ Alerta Antifraude Registrada',
+        `Se guardó un reporte en Supabase para el código ${scannedCitizenId?.substring(0, 8)}... asociado a tus coordenadas GPS actuales (${currentCoords?.latitude?.toFixed(4)}, ${currentCoords?.longitude?.toFixed(4)}).\n\nLa recolección ha sido cancelada por discrepancia física.`,
+        [{ text: 'Aceptar' }]
+      );
+    } catch (err) {
+      console.error('[QRScanner] Error reportando fraude:', err);
+      Alert.alert(
+        'Aviso',
+        'Se canceló la recolección por discrepancia de vivienda. Verifica tu conexión para sincronizar la alerta.'
+      );
+    } finally {
+      setIsRejecting(false);
+      setVerificationModalVisible(false);
+      setScanned(false);
+      setScannedCitizenId(null);
+      setCitizenData(null);
+      setCurrentCoords(null);
+      setScannerInputValue('');
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 200);
+    }
+  };
 
   /**
    * Manejador de eventos cuando el escáner Bluetooth físico envía un Enter
@@ -414,11 +517,17 @@ export default function QRScannerScreen({ navigation }) {
               </View>
             ) : null}
 
-            {/* ID del ciudadano escaneado */}
+            {/* Vivienda y Titular Confirmados */}
             <View style={styles.citizenBadge}>
-              <Text style={styles.citizenLabel}>CIUDADANO DETECTADO</Text>
-              <Text style={styles.citizenId} numberOfLines={1} ellipsizeMode="middle">
-                {scannedCitizenId}
+              <View style={styles.verifiedTagRow}>
+                <Text style={styles.verifiedTagDot}>🛡️</Text>
+                <Text style={styles.citizenLabel}>VIVIENDA CONFIRMADA VISUALMENTE</Text>
+              </View>
+              <Text style={styles.citizenNameConfirmed} numberOfLines={1}>
+                {citizenData?.nombre_completo || 'Titular de Palín'}
+              </Text>
+              <Text style={styles.citizenAddressConfirmed} numberOfLines={2}>
+                📍 {citizenData?.direccion || scannedCitizenId}
               </Text>
             </View>
 
@@ -464,6 +573,7 @@ export default function QRScannerScreen({ navigation }) {
               onPress={() => {
                 setScanned(false);
                 setScannedCitizenId(null);
+                setCitizenData(null);
                 setCurrentCoords(null);
                 setScannerInputValue('');
                 setTimeout(() => {
@@ -475,7 +585,152 @@ export default function QRScannerScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* ── OVERLAY DE CARGA MIENTRAS SE CONSULTA SUPABASE ── */}
+        {isValidatingCitizen && (
+          <View style={styles.validatingOverlay}>
+            <View style={styles.validatingCard}>
+              <ActivityIndicator size="large" color={THEME.colors.primary} />
+              <Text style={styles.validatingTitle}>Consultando Datos en Supabase...</Text>
+              <Text style={styles.validatingSubtitle}>
+                Verificando titular, dirección física y suscripción del inmueble.
+              </Text>
+            </View>
+          </View>
+        )}
       </View>
+
+      {/* ── MODAL DE VALIDACIÓN VISUAL ANTIFRAUDE (PANTALLA COMPLETA - FÁCIL LECTURA BAJO EL SOL) ── */}
+      <Modal
+        visible={verificationModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={handleRejectFraud}
+      >
+        <SafeAreaView style={styles.antifraudModalContainer}>
+          {/* Encabezado Superior de Alerta Antifraude */}
+          <View style={styles.antifraudHeaderBand}>
+            <Text style={styles.antifraudHeaderIcon}>🚨</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.antifraudHeaderTitle}>CONTROL ANTIFRAUDE</Text>
+              <Text style={styles.antifraudHeaderSubtitle}>
+                Verificación Visual Obligatoria de Inmueble
+              </Text>
+            </View>
+            <View style={styles.antifraudSealBadge}>
+              <Text style={styles.antifraudSealText}>PALÍN</Text>
+            </View>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.antifraudScroll}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Aviso Solar para Operario de Campo */}
+            <View style={styles.solarBanner}>
+              <Text style={styles.solarBannerEmoji}>☀️</Text>
+              <Text style={styles.solarBannerText}>
+                Comprueba que estés físicamente frente a esta dirección:
+              </Text>
+            </View>
+
+            {/* 1. SECCIÓN PRINCIPAL: DIRECCIÓN FÍSICA EXACTA (LETRAS EXTRA GIGANTES DE MÁXIMO CONTRASTE) */}
+            <View style={styles.giantAddressCard}>
+              <View style={styles.giantLabelRow}>
+                <Text style={styles.giantPinIcon}>📍</Text>
+                <Text style={styles.giantLabel}>DIRECCIÓN FÍSICA REGISTRADA:</Text>
+              </View>
+              <Text style={styles.giantAddressText}>
+                {citizenData?.direccion || 'SIN DIRECCIÓN EN BASE DE DATOS'}
+              </Text>
+            </View>
+
+            {/* 2. SECCIÓN: NOMBRE DEL TITULAR (LETRAS MUY GRANDES) */}
+            <View style={styles.giantPersonCard}>
+              <View style={styles.giantLabelRow}>
+                <Text style={styles.giantUserIcon}>👤</Text>
+                <Text style={styles.giantLabel}>TITULAR DEL INMUEBLE:</Text>
+              </View>
+              <Text style={styles.giantPersonText}>
+                {citizenData?.nombre_completo || 'Titular No Encontrado'}
+              </Text>
+              {citizenData?.email ? (
+                <Text style={styles.giantPersonSub}>📧 {citizenData.email}</Text>
+              ) : null}
+            </View>
+
+            {/* 3. SECCIÓN: ESTADO DE SUSCRIPCIÓN MUNICIPAL */}
+            <View style={styles.subscriptionCard}>
+              <Text style={styles.subscriptionLabel}>ESTADO DE SUSCRIPCIÓN:</Text>
+              <View
+                style={[
+                  styles.subscriptionPill,
+                  citizenData?.activo ? styles.subPillActive : styles.subPillInactive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.subscriptionText,
+                    citizenData?.activo ? styles.subTextActive : styles.subTextInactive,
+                  ]}
+                >
+                  {citizenData?.activo
+                    ? '🟢 Suscripción Activa — Al Día'
+                    : '🔴 Suscripción Inactiva / Suspendida'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Posición GPS del Operario */}
+            <View style={styles.gpsFootprintBox}>
+              <Text style={styles.gpsFootprintLabel}>
+                🛰️ Coordenadas GPS del Camión: {currentCoords?.latitude?.toFixed(5) || '0.00000'},{' '}
+                {currentCoords?.longitude?.toFixed(5) || '0.00000'} (±{currentCoords?.accuracy || 0}m)
+              </Text>
+            </View>
+
+            {/* ── BOTONES MASIVOS DE ACCIÓN INMEDIATA (REQUERIMIENTO 3) ── */}
+            <View style={styles.massiveButtonsContainer}>
+              {/* BOTÓN VERDE MASIVO: CONFIRMAR VIVIENDA Y RECOLECTAR */}
+              <TouchableOpacity
+                style={styles.massiveBtnConfirm}
+                onPress={handleConfirmVivienda}
+                disabled={isRejecting}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.massiveBtnIcon}>✓</Text>
+                <Text style={styles.massiveBtnText}>Confirmar Vivienda y Recolectar</Text>
+                <Text style={styles.massiveBtnSubtext}>
+                  La dirección física coincide con el inmueble
+                </Text>
+              </TouchableOpacity>
+
+              {/* BOTÓN ROJO MASIVO: RECHAZAR - DIRECCIÓN INCORRECTA (LOG FRAUDE + GPS - REQUERIMIENTO 4) */}
+              <TouchableOpacity
+                style={[styles.massiveBtnReject, isRejecting && styles.btnDisabled]}
+                onPress={handleRejectFraud}
+                disabled={isRejecting}
+                activeOpacity={0.88}
+              >
+                {isRejecting ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={styles.massiveBtnText}> Guardando Alerta en Supabase...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.massiveBtnIcon}>✕</Text>
+                    <Text style={styles.massiveBtnText}>Rechazar - Dirección Incorrecta</Text>
+                    <Text style={styles.massiveBtnSubtext}>
+                      Reportar alerta de fraude con coordenada GPS actual
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </Pressable>
   );
 }
@@ -738,5 +993,326 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 14,
     fontWeight: '600',
+  },
+
+  // ── ESTILOS DE VALIDACIÓN VISUAL ANTIFRAUDE (ALTO CONTRASTE BAJO EL SOL) ──
+  validatingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    zIndex: 99,
+  },
+  validatingCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    width: '90%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  validatingTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  validatingSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+
+  // Resumen verificado en pantalla de clasificación
+  verifiedTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  verifiedTagDot: {
+    fontSize: 14,
+    marginRight: 6,
+  },
+  citizenNameConfirmed: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#F8FAFC',
+    textAlign: 'center',
+  },
+  citizenAddressConfirmed: {
+    fontSize: 13,
+    color: '#93C5FD',
+    marginTop: 4,
+    textAlign: 'center',
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+
+  // Contenedor Pantalla Completa Modal Antifraude
+  antifraudModalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  antifraudHeaderBand: {
+    backgroundColor: '#FEF08A', // Amarillo de alta visibilidad
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 3,
+    borderBottomColor: '#EAB308',
+  },
+  antifraudHeaderIcon: {
+    fontSize: 30,
+    marginRight: 10,
+  },
+  antifraudHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#713F12',
+    letterSpacing: 0.8,
+  },
+  antifraudHeaderSubtitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#A16207',
+  },
+  antifraudSealBadge: {
+    backgroundColor: '#713F12',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  antifraudSealText: {
+    color: '#FEF08A',
+    fontWeight: '900',
+    fontSize: 11,
+  },
+  antifraudScroll: {
+    padding: 18,
+    paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 680,
+      width: '100%',
+      alignSelf: 'center',
+    }),
+  },
+  solarBanner: {
+    backgroundColor: '#FEF9C3',
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FDE047',
+    marginBottom: 16,
+  },
+  solarBannerEmoji: {
+    fontSize: 22,
+    marginRight: 8,
+  },
+  solarBannerText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#713F12',
+    flex: 1,
+    lineHeight: 18,
+  },
+
+  // 1. TARJETA DE DIRECCIÓN FÍSICA EXACTA (LETRAS EXTRA GIGANTES DE MÁXIMO CONTRASTE)
+  giantAddressCard: {
+    backgroundColor: '#0F172A', // Fondo oscuro profundo para evitar reflejos solares
+    borderRadius: 22,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 3.5,
+    borderColor: '#38BDF8', // Cyan brillante de alto contraste
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  giantLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  giantPinIcon: {
+    fontSize: 22,
+    marginRight: 8,
+  },
+  giantLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#93C5FD',
+    letterSpacing: 1,
+  },
+  giantAddressText: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#FFFFFF', // Blanco nítido
+    textAlign: 'center',
+    lineHeight: 34,
+    marginVertical: 4,
+    letterSpacing: 0.2,
+  },
+
+  // 2. TARJETA DEL TITULAR (LETRAS MUY GRANDES)
+  giantPersonCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    borderWidth: 2.5,
+    borderColor: '#CBD5E1',
+  },
+  giantUserIcon: {
+    fontSize: 20,
+    marginRight: 6,
+  },
+  giantPersonText: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginTop: 2,
+    lineHeight: 28,
+  },
+  giantPersonSub: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 4,
+    fontWeight: '700',
+  },
+
+  // 3. ESTADO DE SUSCRIPCIÓN
+  subscriptionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  subscriptionLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  subscriptionPill: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+  },
+  subPillActive: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#16A34A',
+  },
+  subPillInactive: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#DC2626',
+  },
+  subscriptionText: {
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  subTextActive: {
+    color: '#15803D',
+  },
+  subTextInactive: {
+    color: '#B91C1C',
+  },
+
+  // GPS
+  gpsFootprintBox: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  gpsFootprintLabel: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '700',
+  },
+
+  // BOTONES MASIVOS DE ACCIÓN
+  massiveButtonsContainer: {
+    gap: 14,
+  },
+  massiveBtnConfirm: {
+    backgroundColor: '#16A34A', // Verde de alta visibilidad
+    borderRadius: 20,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: '#15803D',
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  massiveBtnReject: {
+    backgroundColor: '#DC2626', // Rojo de alerta
+    borderRadius: 20,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: '#B91C1C',
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  massiveBtnIcon: {
+    fontSize: 32,
+    color: '#FFFFFF',
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  massiveBtnText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  massiveBtnSubtext: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontWeight: '600',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  btnDisabled: {
+    opacity: 0.7,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

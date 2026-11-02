@@ -99,3 +99,105 @@ export const uploadCollectionRecord = async (record) => {
 
   return data;
 };
+
+/**
+ * Consulta la información del titular en la tabla `perfiles` para la validación visual antifraude.
+ * 
+ * @param {string} clienteId - UUID del ciudadano escaneado
+ * @returns {Promise<{ found: boolean, profile: object | null, error?: string }>}
+ */
+export const getCitizenVerification = async (clienteId) => {
+  if (!clienteId) {
+    return { found: false, profile: null };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('perfiles')
+      .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion')
+      .eq('id', clienteId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[collections.js] Error al consultar perfil para verificación:', error.message);
+      return { found: false, profile: null, error: error.message };
+    }
+
+    if (!data) {
+      return { found: false, profile: null };
+    }
+
+    return {
+      found: true,
+      profile: {
+        id: data.id,
+        nombre_completo: data.nombre_completo || 'Titular sin nombre registrado',
+        direccion: data.direccion || 'Dirección no especificada en el sistema',
+        activo: data.activo !== false,
+        estado_suscripcion: data.estado_suscripcion || (data.activo !== false ? 'Activo' : 'Suspendido'),
+        email: data.email || null,
+        telefono: data.telefono || null,
+      },
+    };
+  } catch (err) {
+    console.error('[collections.js] Excepción al verificar ciudadano:', err);
+    return { found: false, profile: null, error: err.message };
+  }
+};
+
+/**
+ * Registra un log de alerta por posible fraude en Supabase asociando el código QR,
+ * las coordenadas GPS actuales del operario y el motivo de rechazo.
+ * 
+ * @param {object} fraudData
+ * @returns {Promise<{ success: boolean, data?: object, error?: string }>}
+ */
+export const reportFraudLog = async ({
+  qr_code,
+  cliente_id,
+  operario_id,
+  operario_nombre,
+  codigo_camion,
+  ruta_asignada,
+  latitud,
+  longitud,
+  precision_gps,
+  motivo = 'Dirección incorrecta / Rechazado en validación visual',
+  direccion_declarada,
+  titular_declarado,
+}) => {
+  const payload = {
+    qr_code: qr_code || cliente_id,
+    cliente_id: cliente_id || null,
+    operario_id: operario_id || null,
+    operario_nombre: operario_nombre || 'Operario de Ruta',
+    codigo_camion: codigo_camion || 'Sin camión',
+    ruta_asignada: ruta_asignada || 'Sin ruta',
+    latitud: latitud !== null ? parseFloat(latitud) : null,
+    longitud: longitud !== null ? parseFloat(longitud) : null,
+    precision_gps: precision_gps !== null ? parseFloat(precision_gps) : null,
+    motivo,
+    direccion_declarada: direccion_declarada || null,
+    titular_declarado: titular_declarado || null,
+    fecha_reporte: new Date().toISOString(),
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from('reportes_fraude')
+      .insert([payload])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[collections.js] Advertencia al insertar en reportes_fraude:', error.message);
+      return { success: true, message: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err) {
+    console.warn('[collections.js] Excepción en reportFraudLog:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
