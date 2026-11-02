@@ -314,6 +314,42 @@ export default function ClientWalletScreen({ navigation }) {
 
   const statusBadge = getStatusBadge();
 
+  // Helper para psicología de recompensas e indicador visual de promoción
+  const getPromoTypeBadge = (tipo, fallbackText = '') => {
+    const raw = `${tipo || ''} ${fallbackText || ''}`.toLowerCase();
+    if (raw.includes('2x1') || raw.includes('dos por uno')) {
+      return {
+        icon: '🎁',
+        label: 'Promoción 2x1',
+        sub: '2x1 Exclusivo',
+        bg: '#FDF2F8',
+        color: '#BE185D',
+        border: '#FBCFE8',
+        tagBg: '#FCE7F3',
+      };
+    }
+    if (raw.includes('%') || raw.includes('porcentaje')) {
+      return {
+        icon: '📉',
+        label: 'Porcentaje (%)',
+        sub: 'Descuento %',
+        bg: '#EFF6FF',
+        color: '#1D4ED8',
+        border: '#BFDBFE',
+        tagBg: '#DBEAFE',
+      };
+    }
+    return {
+      icon: '💰',
+      label: 'Descuento (Q)',
+      sub: 'Monto Fijo (Q)',
+      bg: '#F0FDF4',
+      color: '#15803D',
+      border: '#BBF7D0',
+      tagBg: '#DCFCE7',
+    };
+  };
+
   // Filtrado de comercios
   const categories = ['todos', 'Abarrotes', 'Hogar', 'Cafetería', 'Salud', 'Automotriz'];
   const filteredMerchants =
@@ -414,7 +450,7 @@ export default function ClientWalletScreen({ navigation }) {
                     <Text style={styles.walletBalanceSuffix}>pts</Text>
                   </View>
                   <Text style={styles.walletEquivalentText}>
-                    ≈ Equivalente a Q{(userPoints * 0.1).toFixed(2)} en descuentos locales
+                    Úsalos para desbloquear descuentos, porcentajes y ofertas 2x1 en comercios exclusivos de Palín.
                   </Text>
                 </View>
 
@@ -605,6 +641,7 @@ export default function ClientWalletScreen({ navigation }) {
                 ) : (
                   filteredMerchants.map((m) => {
                     const canAfford = userPoints >= (m.puntos_requeridos || 0);
+                    const promoBadge = getPromoTypeBadge(m.tipo_promocion, m.descuento || m.nombre);
 
                     return (
                       <View key={m.id?.toString()} style={styles.merchantCard}>
@@ -623,10 +660,47 @@ export default function ClientWalletScreen({ navigation }) {
                           </View>
                         </View>
 
-                        {/* Banner del descuento */}
-                        <View style={styles.discountBanner}>
-                          <Text style={styles.discountTag}>🏷️ BENEFICIO EXCLUSIVO:</Text>
-                          <Text style={styles.discountTitle}>{m.descuento}</Text>
+                        {/* Banner del beneficio con indicador visual atractivo de tipo de promoción */}
+                        <View
+                          style={[
+                            styles.discountBanner,
+                            {
+                              backgroundColor: promoBadge.bg,
+                              borderColor: promoBadge.border,
+                              borderLeftColor: promoBadge.color,
+                            },
+                          ]}
+                        >
+                          <View style={styles.discountBannerHeader}>
+                            <Text style={[styles.discountTag, { color: promoBadge.color }]}>
+                              🏷️ BENEFICIO EXCLUSIVO
+                            </Text>
+                            <View
+                              style={[
+                                styles.promoIndicatorBadge,
+                                {
+                                  backgroundColor: promoBadge.tagBg,
+                                  borderColor: promoBadge.border,
+                                },
+                              ]}
+                            >
+                              <Text style={styles.promoIndicatorIcon}>{promoBadge.icon}</Text>
+                              <Text
+                                style={[
+                                  styles.promoIndicatorText,
+                                  { color: promoBadge.color },
+                                ]}
+                              >
+                                {promoBadge.label}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={[styles.discountTitle, { color: promoBadge.color }]}>
+                            {m.descuento || m.nombre}
+                          </Text>
+                          {m.descripcion && m.descripcion !== m.descuento ? (
+                            <Text style={styles.discountSubDesc}>{m.descripcion}</Text>
+                          ) : null}
                         </View>
 
                         {/* Detalles de contacto y ubicación */}
@@ -1122,7 +1196,8 @@ const styles = StyleSheet.create({
     color: '#D1FAE5',
     fontSize: 12,
     fontWeight: '600',
-    marginTop: 4,
+    marginTop: 6,
+    lineHeight: 18,
   },
   walletFooterRow: {
     flexDirection: 'row',
@@ -1450,19 +1525,48 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     marginBottom: 10,
+    borderWidth: 1,
     borderLeftWidth: 4,
     borderLeftColor: '#10B981',
+  },
+  discountBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  promoIndicatorBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  promoIndicatorIcon: {
+    fontSize: 11,
+    marginRight: 4,
+  },
+  promoIndicatorText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   discountTag: {
     fontSize: 10,
     fontWeight: '800',
     color: '#047857',
-    marginBottom: 2,
   },
   discountTitle: {
     fontSize: 13,
     fontWeight: '800',
     color: '#065F46',
+  },
+  discountSubDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 4,
+    lineHeight: 15,
   },
   merchantMetaRow: {
     marginBottom: 4,

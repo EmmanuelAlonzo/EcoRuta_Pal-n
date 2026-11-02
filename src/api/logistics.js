@@ -11,11 +11,20 @@ import { supabase } from '../services/supabase';
  * @returns {Promise<Array>}
  */
 export const getPersonnelList = async () => {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('perfiles')
     .select('*')
     .in('rol', ['operario', 'piloto', 'supervisor'])
-    .order('created_at', { ascending: false });
+    .order('fecha_creacion', { ascending: false });
+
+  if (error) {
+    const res = await supabase
+      .from('perfiles')
+      .select('*')
+      .in('rol', ['operario', 'piloto', 'supervisor']);
+    data = res.data;
+    error = res.error;
+  }
 
   if (error) {
     console.error('[logistics.js] Error al consultar personal:', error);

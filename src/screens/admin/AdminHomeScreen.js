@@ -63,10 +63,12 @@ export default function AdminHomeScreen({ navigation }) {
   const loadOffersAudit = useCallback(async (filter = auditFilter) => {
     setIsLoadingOffers(true);
     try {
+      console.log('[AdminHomeScreen] Consultando ofertas de auditoría con estado:', filter);
       const data = await getOffersPendingAudit(filter);
+      console.log(`[AdminHomeScreen] Recibidas ${data?.length || 0} ofertas para '${filter}'`);
       setOffers(data || []);
     } catch (err) {
-      console.warn('[AdminHome] Error al consultar ofertas comerciales:', err);
+      console.error('[AdminHomeScreen] Error al consultar ofertas comerciales:', err);
     } finally {
       setIsLoadingOffers(false);
     }
@@ -118,10 +120,10 @@ export default function AdminHomeScreen({ navigation }) {
 
   useEffect(() => {
     loadMetrics();
-    loadOffersAudit(auditFilter);
+    loadOffersAudit('revision_admin');
     const unsubscribe = navigation?.addListener?.('focus', () => {
       loadMetrics();
-      loadOffersAudit(auditFilter);
+      loadOffersAudit(auditFilter || 'revision_admin');
     });
     return unsubscribe;
   }, [navigation, loadMetrics, loadOffersAudit, auditFilter]);
@@ -131,7 +133,13 @@ export default function AdminHomeScreen({ navigation }) {
     setSelectedOffer(offer);
     setEditOfferName(offer.nombre || '');
     setEditOfferDesc(offer.descripcion || '');
-    setEditOfferPoints(offer.costo_puntos ? String(offer.costo_puntos) : '50');
+    setEditOfferPoints(
+      offer.puntos_requeridos
+        ? String(offer.puntos_requeridos)
+        : offer.costo_puntos
+        ? String(offer.costo_puntos)
+        : '50'
+    );
     setEditOfferStock(
       offer.stock !== undefined && offer.stock !== null ? String(offer.stock) : '25'
     );
@@ -285,7 +293,10 @@ export default function AdminHomeScreen({ navigation }) {
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={() => loadMetrics(true)}
+            onRefresh={() => {
+              loadMetrics(true);
+              loadOffersAudit(auditFilter || 'revision_admin');
+            }}
             colors={[THEME.roles.admin]}
             tintColor={THEME.roles.admin}
           />
@@ -593,7 +604,9 @@ export default function AdminHomeScreen({ navigation }) {
                       {/* Puntos y Stock */}
                       <View style={styles.offerCardMetrics}>
                         <View style={styles.pointsPill}>
-                          <Text style={styles.pointsPillText}>⭐ {offer.costo_puntos} pts</Text>
+                          <Text style={styles.pointsPillText}>
+                            ⭐ {offer.puntos_requeridos ?? offer.costo_puntos} pts
+                          </Text>
                         </View>
                         <View style={styles.stockPill}>
                           <Text style={styles.stockPillText}>📦 Stock: {offer.stock}</Text>
@@ -601,6 +614,18 @@ export default function AdminHomeScreen({ navigation }) {
                         {Boolean(offer.categoria) && (
                           <View style={styles.categoryPill}>
                             <Text style={styles.categoryPillText}>🏷️ {offer.categoria}</Text>
+                          </View>
+                        )}
+                        {Boolean(offer.tipo_promocion) && (
+                          <View style={styles.promoPill}>
+                            <Text style={styles.promoPillText}>
+                              {offer.tipo_promocion.includes('%')
+                                ? '📉'
+                                : offer.tipo_promocion.includes('2x1')
+                                ? '🎁'
+                                : '💰'}{' '}
+                              {offer.tipo_promocion}
+                            </Text>
                           </View>
                         )}
                       </View>
@@ -1562,6 +1587,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#6D28D9',
+  },
+  promoPill: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  promoPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
   },
   adminNotesCallout: {
     backgroundColor: '#FFFBEB',

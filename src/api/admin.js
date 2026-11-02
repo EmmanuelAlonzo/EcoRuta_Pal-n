@@ -14,9 +14,16 @@ import { supabase } from '../services/supabase';
 export const getGlobalMetrics = async () => {
   try {
     // 1. Consultar historial de recolecciones para sumar peso y puntos reales
-    const { data: collections, error: colErr } = await supabase
+    let { data: collections, error: colErr } = await supabase
       .from('historial_recolecciones')
-      .select('peso_kg, puntos_otorgados, tipo_material');
+      .select('peso_kg, puntos_generados, tipo_material');
+
+    if (colErr) {
+      console.warn('[admin.js] Falló select con puntos_generados, intentando con select general:', colErr.message);
+      const fb = await supabase.from('historial_recolecciones').select('*');
+      collections = fb.data;
+      colErr = fb.error;
+    }
 
     if (colErr) {
       console.error('[admin.js] Error al consultar historial_recolecciones:', colErr);
@@ -35,7 +42,7 @@ export const getGlobalMetrics = async () => {
 
     (collections || []).forEach((c) => {
       const kg = parseFloat(c.peso_kg) || 0;
-      const pts = parseInt(c.puntos_otorgados, 10) || 0;
+      const pts = parseInt(c.puntos_generados ?? c.puntos_otorgados, 10) || 0;
       totalKg += kg;
       totalPuntos += pts;
 
@@ -305,30 +312,72 @@ export const rejectRedemption = async (canjeId) => {
 };
 
 /**
- * Consulta la tabla `catalogo_incentivos` filtrando por ofertas pendientes de auditoría:
- * Por defecto filtra por `estado_aprobacion: 'revision_admin'`.
+ * Consulta la tabla `catalogo_incentivos` filtrando por ofertas para auditoría:
+ * - NO incluye filtro de activo: true (el administrador debe ver ofertas inactivas en revisión).
+ * - Filtra estrictamente por `estado_aprobacion: statusFilter`.
+ * - Imprime cualquier error con console.error sin catches silenciosos.
  * 
  * @param {string} [statusFilter='revision_admin'] - Estado de aprobación a filtrar o 'all'
  * @returns {Promise<Array>} Lista de ofertas
  */
 export const getOffersPendingAudit = async (statusFilter = 'revision_admin') => {
   try {
+    console.log(`[admin.js] Ejecutando getOffersPendingAudit con filtro: '${statusFilter}'`);
+
     let query = supabase
       .from('catalogo_incentivos')
       .select('*');
 
+    // Filtro estricto por estado_aprobacion (SIN filtro de activo: true)
     if (statusFilter && statusFilter !== 'all') {
       query = query.eq('estado_aprobacion', statusFilter);
     }
 
-    const { data, error } = await query.order('created_at', { ascending: false });
+    let { data, error } = await query.order('fecha_creacion', { ascending: false });
 
     if (error) {
-      console.error('[admin.js] Error al consultar ofertas para auditoría:', error);
-      throw error;
+      console.error('[admin.js] Error al ordenar catalogo_incentivos por fecha_creacion:', error);
+      // Reintento sin orden por si la columna no existe en la base de datos
+      let fallbackQuery = supabase.from('catalogo_incentivos').select('*');
+      if (statusFilter && statusFilter !== 'all') {
+        fallbackQuery = fallbackQuery.eq('estado_aprobacion', statusFilter);
+      }
+      const fbRes = await fallbackQuery;
+      if (fbRes.error) {
+        console.error('[admin.js] Error crítico consultando catalogo_incentivos:', fbRes.error);
+        throw fbRes.error;
+      }
+      data = fbRes.data;
     }
 
-    return data || [];
+    const offersList = data || [];
+    console.log(`[admin.js] getOffersPendingAudit obtuvo ${offersList.length} ofertas para '${statusFilter}'.`);
+
+    // Resolver nombres de negocios desde la tabla 'comercios' si existe comercio_id
+    try {
+      const comercioIds = [...new Set(offersList.map((o) => o.comercio_id).filter(Boolean))];
+      if (comercioIds.length > 0) {
+        const { data: comerciosData, error: comErr } = await supabase
+          .from('comercios')
+          .select('id, nombre_negocio')
+          .in('id', comercioIds);
+
+        if (comErr) {
+          console.error('[admin.js] Error al consultar datos de tabla comercios vinculados:', comErr);
+        } else if (comerciosData) {
+          const comMap = new Map(comerciosData.map((c) => [c.id, c.nombre_negocio]));
+          offersList.forEach((o) => {
+            if (o.comercio_id && comMap.has(o.comercio_id)) {
+              o.comercio = comMap.get(o.comercio_id);
+            }
+          });
+        }
+      }
+    } catch (joinErr) {
+      console.error('[admin.js] Excepción resolviendo join con tabla comercios:', joinErr);
+    }
+
+    return offersList;
   } catch (err) {
     console.error('[admin.js] Excepción obteniendo ofertas en auditoría:', err);
     throw err;
@@ -399,6 +448,7 @@ export const auditCommercialOffer = async ({
   if (costoPuntos !== undefined && costoPuntos !== null) {
     const pts = parseInt(costoPuntos, 10);
     if (!isNaN(pts) && pts > 0) {
+      updatePayload.puntos_requeridos = pts;
       updatePayload.costo_puntos = pts;
     }
   }

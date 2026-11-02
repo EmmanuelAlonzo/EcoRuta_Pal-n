@@ -375,10 +375,32 @@ export const recordAffiliateCommissionPayment = async ({
  */
 export const getAffiliateOffers = async (affiliateId, affiliateName = '') => {
   try {
-    const { data, error } = await supabase
+    // Buscar si existe el id en la tabla comercios correspondiente al perfil
+    let realComercioId = null;
+    try {
+      const { data: com } = await supabase
+        .from('comercios')
+        .select('id')
+        .eq('perfil_id', affiliateId)
+        .maybeSingle();
+      if (com?.id) {
+        realComercioId = com.id;
+      }
+    } catch (e) {
+      // Continúa con fallback
+    }
+
+    let { data, error } = await supabase
       .from('catalogo_incentivos')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('fecha_creacion', { ascending: false });
+
+    if (error) {
+      console.warn('[affiliate.js] Falló ordenar por fecha_creacion, consultando sin orden:', error.message);
+      const rawRes = await supabase.from('catalogo_incentivos').select('*');
+      data = rawRes.data;
+      error = rawRes.error;
+    }
 
     if (error) {
       console.warn('[affiliate.js] Error consultando catalogo_incentivos:', error.message);
@@ -387,7 +409,9 @@ export const getAffiliateOffers = async (affiliateId, affiliateName = '') => {
 
     const all = data || [];
     return all.filter((item) => {
-      const matchId = item.detalles?.afiliado_id === affiliateId;
+      const matchId =
+        (realComercioId && item.comercio_id === realComercioId) ||
+        item.comercio_id === affiliateId;
       const matchName =
         affiliateName &&
         item.comercio &&
@@ -412,6 +436,7 @@ export const getAffiliateOffers = async (affiliateId, affiliateName = '') => {
  * @param {number|string} param0.costoPuntos - Puntos requeridos
  * @param {number|string} param0.stock - Stock disponible
  * @param {string} [param0.categoria] - Categoría
+ * @param {string} [param0.tipoPromocion='Descuento (Q)'] - Tipo de promoción: 'Descuento (Q)', 'Porcentaje (%)' o 'Promoción 2x1'
  * @param {string} [param0.imagenUrl] - Imagen o icono
  * @returns {Promise<{ success: boolean, offer: object }>}
  */
@@ -423,6 +448,7 @@ export const proposeAffiliateOffer = async ({
   costoPuntos,
   stock,
   categoria = 'Comercio Local',
+  tipoPromocion = 'Descuento (Q)',
   imagenUrl = null,
 }) => {
   if (!nombre?.trim() || !descripcion?.trim()) {
@@ -439,22 +465,56 @@ export const proposeAffiliateOffer = async ({
     throw new Error('El stock debe ser un número entero mayor o igual a 0.');
   }
 
+  // 1. Resolver la FK hacia 'comercios': affiliateId es el ID del perfil
+  let realComercioId = null;
+  const { data: existingComercio, error: searchComercioErr } = await supabase
+    .from('comercios')
+    .select('id')
+    .eq('perfil_id', affiliateId)
+    .maybeSingle();
+
+  if (searchComercioErr) {
+    console.warn('[affiliate.js] Advertencia buscando en tabla comercios:', searchComercioErr.message);
+  }
+
+  if (existingComercio?.id) {
+    realComercioId = existingComercio.id;
+  } else {
+    // Si la consulta no devuelve nada, inserta el comercio automáticamente
+    const { data: newComercio, error: insertComercioErr } = await supabase
+      .from('comercios')
+      .insert({
+        perfil_id: affiliateId,
+        nombre_negocio: affiliateName,
+      })
+      .select('id')
+      .single();
+
+    if (insertComercioErr) {
+      console.error('[affiliate.js] Error insertando en tabla comercios:', insertComercioErr);
+      throw new Error(`Fallo al registrar comercio en Supabase: ${insertComercioErr.message}`);
+    }
+    realComercioId = newComercio?.id;
+  }
+
+  const nowIso = new Date().toISOString();
+
+  // 2. Payload limpio: sin 'detalles', con comercio_id real y tipo_promocion
   const payload = {
+    comercio_id: realComercioId,
     nombre: nombre.trim(),
     descripcion: descripcion.trim(),
+    puntos_requeridos: puntosNum,
     costo_puntos: puntosNum,
     stock: stockNum,
     comercio: affiliateName.trim(),
     categoria: (categoria || 'Comercio Local').trim(),
+    tipo_promocion: (tipoPromocion || 'Descuento (Q)').trim(),
     activo: false, // Inactivo hasta aprobación admin
     estado_aprobacion: 'revision_admin', // Requerimiento estricto
     notas_admin: null,
     imagen_url: imagenUrl,
-    detalles: {
-      afiliado_id: affiliateId,
-      fecha_propuesta: new Date().toISOString(),
-    },
-    created_at: new Date().toISOString(),
+    fecha_creacion: nowIso,
   };
 
   try {
@@ -467,14 +527,19 @@ export const proposeAffiliateOffer = async ({
     if (error) {
       console.warn('[affiliate.js] Falló inserción detallada de oferta, probando base:', error.message);
       const fallbackPayload = {
+        comercio_id: realComercioId,
         nombre: nombre.trim(),
         descripcion: descripcion.trim(),
+        puntos_requeridos: puntosNum,
         costo_puntos: puntosNum,
         stock: stockNum,
         comercio: affiliateName.trim(),
         categoria: (categoria || 'Comercio Local').trim(),
+        tipo_promocion: (tipoPromocion || 'Descuento (Q)').trim(),
         activo: false,
         estado_aprobacion: 'revision_admin',
+        notas_admin: null,
+        fecha_creacion: nowIso,
       };
       const { data: fbData, error: fbErr } = await supabase
         .from('catalogo_incentivos')
@@ -483,8 +548,30 @@ export const proposeAffiliateOffer = async ({
         .maybeSingle();
 
       if (fbErr) {
-        console.error('[affiliate.js] Error insertando oferta:', fbErr);
-        throw new Error(fbErr.message || 'No se pudo guardar la oferta en Supabase.');
+        console.warn('[affiliate.js] Falló fallback base, intentando con campos esenciales:', fbErr.message);
+        const minimalPayload = {
+          comercio_id: realComercioId,
+          nombre: nombre.trim(),
+          descripcion: descripcion.trim(),
+          puntos_requeridos: puntosNum,
+          stock: stockNum,
+          comercio: affiliateName.trim(),
+          categoria: (categoria || 'Comercio Local').trim(),
+          activo: false,
+          estado_aprobacion: 'revision_admin',
+          fecha_creacion: nowIso,
+        };
+        const { data: minData, error: minErr } = await supabase
+          .from('catalogo_incentivos')
+          .insert([minimalPayload])
+          .select()
+          .maybeSingle();
+
+        if (minErr) {
+          console.error('[affiliate.js] Error insertando oferta:', minErr);
+          throw new Error(minErr.message || 'No se pudo guardar la oferta en Supabase.');
+        }
+        return { success: true, offer: minData || minimalPayload };
       }
       return { success: true, offer: fbData || fallbackPayload };
     }

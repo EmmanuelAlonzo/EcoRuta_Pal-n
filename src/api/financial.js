@@ -14,6 +14,7 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     categoria: 'Abarrotes y Alimentos',
     icono: '🛒',
     descuento: '15% de descuento en canasta básica',
+    tipo_promocion: 'Porcentaje (%)',
     puntos_requeridos: 80,
     direccion: '4ta Calle 2-15, Zona 1, Palín, Escuintla',
     horario: 'Lunes a Domingo: 7:00 AM - 8:00 PM',
@@ -26,6 +27,7 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     categoria: 'Hogar y Construcción',
     icono: '🔨',
     descuento: 'Q25.00 de descuento en compras mayores a Q100',
+    tipo_promocion: 'Descuento (Q)',
     puntos_requeridos: 100,
     direccion: 'Avenida Principal 5-30, Zona 2, Palín',
     horario: 'Lunes a Sábado: 8:00 AM - 6:00 PM',
@@ -37,7 +39,8 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     nombre: 'Café & Panadería Volcán Palín',
     categoria: 'Cafetería y Repostería',
     icono: '☕',
-    descuento: '1 Café tradicional + 2 panes artesanales',
+    descuento: '1 Café tradicional + 2 panes artesanales (Promoción 2x1)',
+    tipo_promocion: 'Promoción 2x1',
     puntos_requeridos: 50,
     direccion: 'Frente al Parque Central de Palín',
     horario: 'Lunes a Domingo: 6:30 AM - 7:30 PM',
@@ -50,6 +53,7 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     categoria: 'Salud y Cuidado Personal',
     icono: '💊',
     descuento: '10% de descuento en medicamentos genéricos',
+    tipo_promocion: 'Porcentaje (%)',
     puntos_requeridos: 60,
     direccion: 'Barrio San Pedro, Zona 3, Palín',
     horario: '24 Horas los 365 días',
@@ -62,6 +66,7 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     categoria: 'Automotriz y Motos',
     icono: '🔧',
     descuento: 'Revisión preventiva gratis + 10% en mano de obra',
+    tipo_promocion: 'Porcentaje (%)',
     puntos_requeridos: 120,
     direccion: 'Km 39 Carretera al Pacífico, Entrada a Palín',
     horario: 'Lunes a Sábado: 7:30 AM - 5:30 PM',
@@ -74,6 +79,7 @@ export const PALIN_AFFILIATED_MERCHANTS = [
     categoria: 'Papelería y Educación',
     icono: '📚',
     descuento: 'Q15.00 de descuento en cuadernos y reciclaje',
+    tipo_promocion: 'Descuento (Q)',
     puntos_requeridos: 40,
     direccion: '3ra Avenida 1-10, Zona 1, Palín',
     horario: 'Lunes a Viernes: 8:00 AM - 6:00 PM',
@@ -83,11 +89,45 @@ export const PALIN_AFFILIATED_MERCHANTS = [
 ];
 
 /**
- * Consulta la lista de comercios aliados en Supabase
+ * Consulta la lista de incentivos/ofertas de comercios aliados en Supabase
  * @returns {Promise<Array>}
  */
 export const getAffiliatedMerchants = async () => {
   try {
+    // 1. Priorizar ofertas reales aprobadas y activas de catalogo_incentivos
+    try {
+      const { data: incentives, error: incError } = await supabase
+        .from('catalogo_incentivos')
+        .select('*')
+        .eq('activo', true)
+        .eq('estado_aprobacion', 'aprobado');
+
+      if (!incError && incentives && incentives.length > 0) {
+        return incentives.map((o) => ({
+          id: o.id,
+          nombre: o.comercio || o.nombre,
+          descuento: o.nombre,
+          descripcion: o.descripcion,
+          categoria: o.categoria || 'Comercio Local',
+          icono: (o.categoria || '').toLowerCase().includes('café')
+            ? '☕'
+            : (o.categoria || '').toLowerCase().includes('farmacia') || (o.categoria || '').toLowerCase().includes('salud')
+            ? '💊'
+            : (o.categoria || '').toLowerCase().includes('abarrotes')
+            ? '🛒'
+            : '🏪',
+          puntos_requeridos: o.puntos_requeridos || o.costo_puntos || 50,
+          tipo_promocion: o.tipo_promocion || 'Descuento (Q)',
+          direccion: o.direccion || 'Palín, Escuintla',
+          horario: o.horario || 'Lunes a Sábado',
+          activo: true,
+        }));
+      }
+    } catch (e) {
+      console.warn('[financial.js] Falló consulta a catalogo_incentivos:', e.message);
+    }
+
+    // 2. Si no hay incentivos aprobados, consultar tabla comercios
     const { data, error } = await supabase
       .from('comercios')
       .select('*')
@@ -103,7 +143,10 @@ export const getAffiliatedMerchants = async () => {
       return PALIN_AFFILIATED_MERCHANTS;
     }
 
-    return data;
+    return data.map((item) => ({
+      ...item,
+      tipo_promocion: item.tipo_promocion || 'Descuento (Q)',
+    }));
   } catch (err) {
     console.warn('[financial.js] Fallback a comercios locales de Palín:', err.message);
     return PALIN_AFFILIATED_MERCHANTS;

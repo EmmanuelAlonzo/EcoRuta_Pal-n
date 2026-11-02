@@ -297,6 +297,7 @@ export default function AffiliateHomeScreen({ navigation }) {
   const [offerPoints, setOfferPoints] = useState('50');
   const [offerStock, setOfferStock] = useState('25');
   const [offerCategory, setOfferCategory] = useState('Abarrotes');
+  const [offerPromoType, setOfferPromoType] = useState('Descuento (Q)');
   const [isSubmittingOffer, setIsSubmittingOffer] = useState(false);
   const [isRespondingCounter, setIsRespondingCounter] = useState(false);
 
@@ -349,6 +350,7 @@ export default function AffiliateHomeScreen({ navigation }) {
         costoPuntos: pointsNum,
         stock: stockNum,
         categoria: offerCategory,
+        tipoPromocion: offerPromoType,
       });
 
       await loadOffers();
@@ -358,6 +360,7 @@ export default function AffiliateHomeScreen({ navigation }) {
       setOfferDesc('');
       setOfferPoints('50');
       setOfferStock('25');
+      setOfferPromoType('Descuento (Q)');
 
       Alert.alert(
         '📢 Oferta Enviada a Revisión',
@@ -403,6 +406,35 @@ export default function AffiliateHomeScreen({ navigation }) {
         },
       },
     ]);
+  };
+
+  const getPromoTypeBadge = (tipo) => {
+    const raw = (tipo || 'Descuento (Q)').toLowerCase();
+    if (raw.includes('%') || raw.includes('porcentaje')) {
+      return {
+        icon: '📉',
+        label: 'Porcentaje (%)',
+        bg: '#EFF6FF',
+        color: '#1D4ED8',
+        border: '#BFDBFE',
+      };
+    }
+    if (raw.includes('2x1')) {
+      return {
+        icon: '🎁',
+        label: 'Promoción 2x1',
+        bg: '#FDF2F8',
+        color: '#BE185D',
+        border: '#FBCFE8',
+      };
+    }
+    return {
+      icon: '💰',
+      label: 'Descuento (Q)',
+      bg: '#F0FDF4',
+      color: '#15803D',
+      border: '#BBF7D0',
+    };
   };
 
   const getOfferStatusBadge = (status) => {
@@ -791,7 +823,24 @@ export default function AffiliateHomeScreen({ navigation }) {
                     {/* Header de la oferta con Título e Insignia */}
                     <View style={styles.offerCardTop}>
                       <View style={{ flex: 1, marginRight: 8 }}>
-                        <Text style={styles.offerTitle}>{offer.nombre}</Text>
+                        <View style={styles.offerTitleRow}>
+                          <Text style={styles.offerTitle}>{offer.nombre}</Text>
+                          {(() => {
+                            const pBadge = getPromoTypeBadge(offer.tipo_promocion);
+                            return (
+                              <View
+                                style={[
+                                  styles.promoTypeBadge,
+                                  { backgroundColor: pBadge.bg, borderColor: pBadge.border },
+                                ]}
+                              >
+                                <Text style={[styles.promoTypeBadgeText, { color: pBadge.color }]}>
+                                  {pBadge.icon} {pBadge.label}
+                                </Text>
+                              </View>
+                            );
+                          })()}
+                        </View>
                         <Text style={styles.offerCategoryTag}>
                           🏷️ {offer.categoria || 'Comercio Local'}
                         </Text>
@@ -813,9 +862,11 @@ export default function AffiliateHomeScreen({ navigation }) {
                     {/* Fila de Métricas: Puntos y Stock */}
                     <View style={styles.offerMetricsRow}>
                       <View style={styles.offerMetricItem}>
-                        <Text style={styles.offerMetricVal}>⭐ {offer.costo_puntos} pts</Text>
+                        <Text style={styles.offerMetricVal}>
+                          ⭐ {offer.puntos_requeridos ?? offer.costo_puntos} pts
+                        </Text>
                         <Text style={styles.offerMetricSub}>
-                          (≈ Q{((offer.costo_puntos || 0) * 0.1).toFixed(2)})
+                          (≈ Q{(((offer.puntos_requeridos ?? offer.costo_puntos) || 0) * 0.1).toFixed(2)})
                         </Text>
                       </View>
                       <View style={styles.offerMetricDivider} />
@@ -1662,6 +1713,40 @@ export default function AffiliateHomeScreen({ navigation }) {
                   />
                   <Text style={styles.inputHelperText}>Límite de canjes</Text>
                 </View>
+              </View>
+
+              {/* Selector interactivo de tipo de promoción */}
+              <Text style={styles.inputLabel}>Tipo de Promoción *</Text>
+              <View style={styles.promoTypeSelectorRow}>
+                {[
+                  { id: 'Descuento (Q)', label: 'Descuento (Q)', icon: '💰' },
+                  { id: 'Porcentaje (%)', label: 'Porcentaje (%)', icon: '📉' },
+                  { id: 'Promoción 2x1', label: 'Promoción 2x1', icon: '🎁' },
+                ].map((item) => {
+                  const isSelected = offerPromoType === item.id;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[
+                        styles.promoSelectChip,
+                        isSelected && styles.promoSelectChipActive,
+                      ]}
+                      onPress={() => setOfferPromoType(item.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.promoSelectChipIcon}>{item.icon}</Text>
+                      <Text
+                        style={[
+                          styles.promoSelectChipText,
+                          isSelected && styles.promoSelectChipTextActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
               <Text style={styles.inputLabel}>Categoría Comercial</Text>
@@ -3126,5 +3211,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#1E40AF',
     lineHeight: 16,
+  },
+  offerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 2,
+  },
+  promoTypeBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  promoTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  promoTypeSelectorRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  promoSelectChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  promoSelectChipActive: {
+    backgroundColor: '#CCFBF1',
+    borderColor: '#0D9488',
+  },
+  promoSelectChipIcon: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  promoSelectChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  promoSelectChipTextActive: {
+    color: '#0F766E',
+    fontWeight: '800',
   },
 });

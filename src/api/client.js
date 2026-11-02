@@ -62,16 +62,22 @@ export const getAvailableIncentives = async () => {
     .from('catalogo_incentivos')
     .select('*')
     .eq('activo', true)
-    .gt('stock', 0)
-    .order('costo_puntos', { ascending: true });
+    .gt('stock', 0);
 
   if (error) {
     console.error('[client.js] Error al consultar catálogo de incentivos:', error);
     throw error;
   }
 
+  // Ordenar de menor a mayor costo de puntos de forma segura
+  const sorted = (data || []).sort(
+    (a, b) =>
+      (a.puntos_requeridos ?? a.costo_puntos ?? 0) -
+      (b.puntos_requeridos ?? b.costo_puntos ?? 0)
+  );
+
   // Solo las ofertas aprobadas se muestran a los clientes
-  const filtered = (data || []).filter((item) => {
+  const filtered = sorted.filter((item) => {
     if (item.estado_aprobacion) {
       return item.estado_aprobacion === 'aprobado';
     }
