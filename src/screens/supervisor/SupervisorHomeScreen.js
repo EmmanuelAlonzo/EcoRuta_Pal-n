@@ -753,14 +753,17 @@ export default function SupervisorHomeScreen({ navigation }) {
                   </View>
                 </View>
 
-                {/* Mapa Interactivo para marcar puntos */}
-                <EcoMap
-                  centerCoordinate={{ latitude: 14.4042, longitude: -90.6978 }}
-                  polygonCoordinates={routePolygon}
-                  onMapPress={handleAddMapPoint}
-                  height={220}
-                  zoomLevel={15}
-                />
+                {/* Contenedor con altura fija estricta para Android */}
+                <View style={styles.modalMapWrapper}>
+                  <EcoMap
+                    centerCoordinate={{ latitude: 14.4042, longitude: -90.6978 }}
+                    polygonCoordinates={routePolygon}
+                    onMapPress={handleAddMapPoint}
+                    height={300}
+                    zoomLevel={15}
+                    style={{ width: '100%', height: '100%' }}
+                  />
+                </View>
 
                 {/* Botones de Control de Geometría */}
                 <View style={styles.geoControlsRow}>
@@ -1439,6 +1442,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#1D4ED8',
+  },
+  modalMapWrapper: {
+    height: 300,
+    width: '100%',
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#E2E8F0',
   },
   geoControlsRow: {
     flexDirection: 'row',

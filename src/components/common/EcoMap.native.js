@@ -41,7 +41,7 @@ export default function EcoMap({
       <MapView
         ref={mapRef}
         provider={PROVIDER_DEFAULT}
-        style={StyleSheet.absoluteFillObject}
+        style={[StyleSheet.absoluteFillObject, styles.mapView]}
         initialRegion={defaultRegion}
         showsUserLocation={true}
         showsMyLocationButton={true}
@@ -144,6 +144,11 @@ export default function EcoMap({
 }
 
 const styles = StyleSheet.create({
+  mapView: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
   polygonVertexBadge: {
     width: 22,
     height: 22,
