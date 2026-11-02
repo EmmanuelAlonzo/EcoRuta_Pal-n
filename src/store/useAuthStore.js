@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { loginWithEmail, registerWithEmail, fetchUserProfile, signOutUser } from '../api/auth';
 
@@ -16,6 +17,7 @@ export const useAuthStore = create((set, get) => ({
   isLoading: true, // Inicia en true mientras se verifica la sesión
   error: null,
   isConnected: true,
+  isLoggingOut: false,
 
   /**
    * 1. Inicio de sesión real con Supabase
@@ -161,15 +163,19 @@ export const useAuthStore = create((set, get) => ({
   },
 
   /**
-   * 4. Cerrar sesión
+   * 4. Cerrar sesión con desmontaje seguro y purga de estado reactivo
    */
   logout: async () => {
-    set({ isLoading: true });
+    // Evitar invocaciones duplicadas o bucles recursivos
+    if (get().isLoggingOut) return;
+    set({ isLoggingOut: true, isLoading: true });
+
     try {
       await signOutUser();
     } catch (err) {
       console.warn('[useAuthStore] Advertencia al cerrar sesión en Supabase:', err);
     } finally {
+      // 3. Limpiar explícitamente cualquier estado global reactivo (Zustand)
       set({
         user: null,
         profile: null,
@@ -177,8 +183,27 @@ export const useAuthStore = create((set, get) => ({
         role: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoggingOut: false,
         error: null,
       });
+
+      // 4. Implementar desmontaje seguro de interfaz: si es web,
+      // ejecutar window.location.replace('/') o reload() inmediatamente después del signOut
+      // para limpiar la memoria caché del DOM y evitar re-renders con perfiles nulos.
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try {
+          if (window.location.pathname !== '/' || window.location.search || window.location.hash) {
+            window.location.replace('/');
+          } else {
+            window.location.reload();
+          }
+        } catch (webErr) {
+          console.warn('[useAuthStore] Error en desmontaje web:', webErr);
+          try {
+            window.location.reload();
+          } catch (_) {}
+        }
+      }
     }
   },
 

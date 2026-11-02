@@ -17,10 +17,13 @@ export default function App() {
     // 2. Restaurar sesión persistente desde Expo SecureStore al arrancar la app
     initializeAuth();
 
-    // 2. Suscripción a cambios de estado de autenticación (refrescos de token, cierres de sesión)
+    // 3. Suscripción a cambios de estado de autenticación (refrescos de token, cierres de sesión)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        useAuthStore.getState().logout();
+        const { isAuthenticated, isLoggingOut } = useAuthStore.getState();
+        if (isAuthenticated && !isLoggingOut) {
+          useAuthStore.getState().logout();
+        }
       } else if (event === 'TOKEN_REFRESHED' && session) {
         useAuthStore.setState({ session, user: session.user });
       }

@@ -62,13 +62,21 @@ export default function SupervisorAssignScreen({ navigation }) {
       setTrucks(trucksData || []);
       setRoutes(routesData || []);
 
-      // Auto-seleccionar primer elemento si no hay ninguno seleccionado
-      if (operationalStaff.length > 0 && !selectedStaffRef.current) {
-        const first = operationalStaff[0];
-        selectedStaffRef.current = first;
-        setSelectedStaff(first);
-        setSelectedTruck(first.codigo_camion || (trucksData[0]?.codigo || 'CAM-01'));
-        setSelectedRoute(first.ruta_asignada || (routesData[0]?.nombre || 'Zona 1'));
+      // Sincronizar selección activa solo si el colaborador ya estaba seleccionado y sigue existiendo
+      if (selectedStaffRef.current) {
+        const fresh = operationalStaff.find((p) => p.id === selectedStaffRef.current.id);
+        if (fresh) {
+          selectedStaffRef.current = fresh;
+          setSelectedStaff(fresh);
+          // Pre-llenar estrictamente si la consulta a la tabla `perfiles` en Supabase devuelve un valor real
+          setSelectedTruck(fresh.codigo_camion ? fresh.codigo_camion : '');
+          setSelectedRoute(fresh.ruta_asignada ? fresh.ruta_asignada : '');
+        } else {
+          selectedStaffRef.current = null;
+          setSelectedStaff(null);
+          setSelectedTruck('');
+          setSelectedRoute('');
+        }
       }
     } catch (err) {
       console.error('[SupervisorAssign] Error cargando asignaciones:', err);
@@ -79,25 +87,57 @@ export default function SupervisorAssignScreen({ navigation }) {
     }
   }, []);
 
+  // Función para reiniciar a null o vacío todos los estados locales de selección
+  const resetSelectionState = useCallback(() => {
+    selectedStaffRef.current = null;
+    setSelectedStaff(null);
+    setSelectedTruck('');
+    setSelectedRoute('');
+  }, []);
+
+  // Limpieza al desmontar el componente
+  useEffect(() => {
+    return () => {
+      resetSelectionState();
+    };
+  }, [resetSelectionState]);
+
   useEffect(() => {
     loadData();
-    const unsubscribe = navigation?.addListener?.('focus', () => {
+    const unsubscribeFocus = navigation?.addListener?.('focus', () => {
       // Recarga silenciosa en segundo plano
       loadData(true);
     });
-    return unsubscribe;
-  }, [navigation, loadData]);
+    const unsubscribeBlur = navigation?.addListener?.('blur', () => {
+      // Limpiar estados locales residuales al navegar fuera de la pantalla
+      resetSelectionState();
+    });
+
+    return () => {
+      unsubscribeFocus?.();
+      unsubscribeBlur?.();
+      resetSelectionState();
+    };
+  }, [navigation, loadData, resetSelectionState]);
 
   const handleSelectStaff = (staff) => {
-    if (!staff) return;
+    if (!staff) {
+      resetSelectionState();
+      return;
+    }
+
+    // Si ya está seleccionado, permitir deseleccionar para volver al estado inicial limpio
+    if (selectedStaff?.id === staff.id) {
+      resetSelectionState();
+      return;
+    }
+
     selectedStaffRef.current = staff;
     setSelectedStaff(staff);
-    if (staff.codigo_camion) {
-      setSelectedTruck(staff.codigo_camion);
-    }
-    if (staff.ruta_asignada) {
-      setSelectedRoute(staff.ruta_asignada);
-    }
+
+    // Pre-llenar estrictamente si la consulta a la tabla `perfiles` en Supabase devuelve un valor real; de lo contrario limpiar a vacío
+    setSelectedTruck(staff.codigo_camion ? staff.codigo_camion : '');
+    setSelectedRoute(staff.ruta_asignada ? staff.ruta_asignada : '');
   };
 
   const handleSaveAssignment = async () => {
@@ -294,7 +334,14 @@ export default function SupervisorAssignScreen({ navigation }) {
 
           {/* RESUMEN DE ASIGNACIÓN Y BOTÓN */}
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>📌 Resumen de la Asignación:</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={styles.summaryTitle}>📌 Resumen de la Asignación:</Text>
+              {selectedStaff && (
+                <TouchableOpacity onPress={resetSelectionState} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.clearSelectionText}>✕ Limpiar selección</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <Text style={styles.summaryLine}>
               • Colaborador: <Text style={styles.summaryBold}>{selectedStaff?.nombre_completo || 'Ninguno'}</Text>
             </Text>
@@ -560,6 +607,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#92400E',
     marginBottom: 8,
+  },
+  clearSelectionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+    textDecorationLine: 'underline',
   },
   summaryLine: {
     fontSize: 12,

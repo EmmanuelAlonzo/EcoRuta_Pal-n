@@ -83,6 +83,26 @@ export default function AdminPersonnelScreen({ navigation }) {
     return unsubscribe;
   }, [navigation, loadData]);
 
+  // Limpieza de estados locales al cerrar modal o desmontar pantalla
+  useEffect(() => {
+    if (!editModalVisible) {
+      setSelectedUser(null);
+      setEditNombre('');
+      setEditTelefono('');
+      setEditRol('operario');
+      setEditCamion('');
+      setEditRuta('');
+    }
+  }, [editModalVisible]);
+
+  useEffect(() => {
+    return () => {
+      setSelectedUser(null);
+      setEditCamion('');
+      setEditRuta('');
+    };
+  }, []);
+
   // ─── ACCIÓN: SUSPENDER / ACTIVAR COLABORADOR ──────────────────────────────
   const handleToggleStatus = (item) => {
     const isCurrentlyActive = item.activo !== false;

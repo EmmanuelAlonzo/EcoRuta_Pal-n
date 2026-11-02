@@ -53,7 +53,11 @@ export const loginWithEmail = async (email, password) => {
 
   // 3. Bloqueo de inicio de sesión si la cuenta está suspendida por el administrador
   if (profile.activo === false) {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (signOutErr) {
+      console.warn('[auth.js] Error al cerrar sesión de cuenta inactiva:', signOutErr);
+    }
     throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado por la administración municipal.');
   }
 
@@ -114,7 +118,11 @@ export const fetchUserProfile = async (userId) => {
   }
 
   if (profile && profile.activo === false) {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (signOutErr) {
+      console.warn('[auth.js] Error al cerrar sesión de perfil inactivo:', signOutErr);
+    }
     throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado.');
   }
 
@@ -123,11 +131,15 @@ export const fetchUserProfile = async (userId) => {
 
 /**
  * Cerrar sesión en Supabase y purgar tokens de SecureStore
+ * Envuelto de manera segura en try/catch para evitar excepciones no controladas.
  */
 export const signOutUser = async () => {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    console.error('[auth.js] Error al cerrar sesión:', error);
-    throw new Error(error.message || 'Error al cerrar sesión.');
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.warn('[auth.js] Advertencia de Supabase al cerrar sesión:', error.message);
+    }
+  } catch (error) {
+    console.error('[auth.js] Excepción atrapada en signOutUser:', error);
   }
 };
