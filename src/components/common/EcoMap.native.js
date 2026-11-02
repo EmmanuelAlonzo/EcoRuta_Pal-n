@@ -1,12 +1,15 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import MapView, { Marker, Callout, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, Callout, Polygon, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import { THEME } from '../../constants/theme';
 
 export default function EcoMap({
+  centerCoordinate,
   initialRegion,
   truckLocation,
   markers = [],
+  polygonCoordinates = [],
+  onMapPress,
   onMarkerPress,
   height = 300,
   style,
@@ -14,22 +17,24 @@ export default function EcoMap({
   const mapRef = useRef(null);
 
   const defaultRegion = initialRegion || {
-    latitude: truckLocation?.latitude || 14.4042,
-    longitude: truckLocation?.longitude || -90.6978,
+    latitude: centerCoordinate?.latitude || truckLocation?.latitude || 14.4042,
+    longitude: centerCoordinate?.longitude || truckLocation?.longitude || -90.6978,
     latitudeDelta: 0.015,
     longitudeDelta: 0.015,
   };
 
   useEffect(() => {
-    if (truckLocation?.latitude && truckLocation?.longitude && mapRef.current) {
+    const lat = centerCoordinate?.latitude || truckLocation?.latitude;
+    const lng = centerCoordinate?.longitude || truckLocation?.longitude;
+    if (lat && lng && mapRef.current) {
       mapRef.current.animateToRegion({
-        latitude: truckLocation.latitude,
-        longitude: truckLocation.longitude,
+        latitude: lat,
+        longitude: lng,
         latitudeDelta: 0.012,
         longitudeDelta: 0.012,
       }, 800);
     }
-  }, [truckLocation?.latitude, truckLocation?.longitude]);
+  }, [centerCoordinate?.latitude, centerCoordinate?.longitude, truckLocation?.latitude, truckLocation?.longitude]);
 
   return (
     <View style={[styles.container, { height }, style]}>
@@ -41,6 +46,7 @@ export default function EcoMap({
         showsUserLocation={true}
         showsMyLocationButton={true}
         showsCompass={true}
+        onPress={(e) => onMapPress && onMapPress(e.nativeEvent.coordinate)}
       >
         {/* Marcador de Ubicación del Camión Recolector */}
         {truckLocation?.latitude && truckLocation?.longitude && (
@@ -100,12 +106,64 @@ export default function EcoMap({
             </Marker>
           );
         })}
+
+        {/* Polígono y Trazado de Calles de la Ruta */}
+        {polygonCoordinates && polygonCoordinates.length > 1 && (
+          <Polyline
+            coordinates={polygonCoordinates}
+            strokeColor="#2563EB"
+            strokeWidth={3}
+          />
+        )}
+
+        {polygonCoordinates && polygonCoordinates.length > 2 && (
+          <Polygon
+            coordinates={polygonCoordinates}
+            fillColor="rgba(37, 99, 235, 0.22)"
+            strokeColor="#1D4ED8"
+            strokeWidth={2}
+          />
+        )}
+
+        {/* Marcadores de Vértices del Trazado */}
+        {polygonCoordinates &&
+          polygonCoordinates.map((pt, idx) => (
+            <Marker
+              key={`poly_pt_${idx}`}
+              coordinate={{ latitude: pt.latitude, longitude: pt.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.polygonVertexBadge}>
+                <Text style={styles.polygonVertexText}>{idx + 1}</Text>
+              </View>
+            </Marker>
+          ))}
       </MapView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  polygonVertexBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#2563EB',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  polygonVertexText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
   container: {
     width: '100%',
     borderRadius: 16,

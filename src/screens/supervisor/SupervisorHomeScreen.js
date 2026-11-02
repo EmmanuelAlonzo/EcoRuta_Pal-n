@@ -51,11 +51,12 @@ export default function SupervisorHomeScreen({ navigation }) {
   const [truckActivo, setTruckActivo] = useState(true);
   const [isSavingTruck, setIsSavingTruck] = useState(false);
 
-  // Estados para Modal de Ruta
+  // Estados para Modal de Ruta y Selección Geográfica
   const [routeModalVisible, setRouteModalVisible] = useState(false);
   const [editingRoute, setEditingRoute] = useState(null);
   const [routeNombre, setRouteNombre] = useState('');
   const [routeDescripcion, setRouteDescripcion] = useState('');
+  const [routePolygon, setRoutePolygon] = useState([]);
   const [isSavingRoute, setIsSavingRoute] = useState(false);
 
   const loadData = useCallback(async (isPullToRefresh = false) => {
@@ -162,18 +163,40 @@ export default function SupervisorHomeScreen({ navigation }) {
     );
   };
 
-  // ─── CRUD RUTAS ───────────────────────────────────────────────────────────
+  // ─── CRUD RUTAS Y SELECCIÓN GEOGRÁFICA ────────────────────────────────────
   const handleOpenRouteModal = (ruta = null) => {
     if (ruta) {
       setEditingRoute(ruta);
       setRouteNombre(ruta.nombre || '');
       setRouteDescripcion(ruta.descripcion || '');
+      setRoutePolygon(Array.isArray(ruta.geometria_ruta) ? ruta.geometria_ruta : []);
     } else {
       setEditingRoute(null);
       setRouteNombre('');
       setRouteDescripcion('');
+      setRoutePolygon([]);
     }
     setRouteModalVisible(true);
+  };
+
+  // Manejo de interacción geográfica en el mapa
+  const handleAddMapPoint = (coord) => {
+    if (!coord || !coord.latitude || !coord.longitude) return;
+    setRoutePolygon((prev) => [
+      ...prev,
+      {
+        latitude: parseFloat(coord.latitude),
+        longitude: parseFloat(coord.longitude),
+      },
+    ]);
+  };
+
+  const handleClearPolygon = () => {
+    setRoutePolygon([]);
+  };
+
+  const handleUndoPolygonPoint = () => {
+    setRoutePolygon((prev) => prev.slice(0, -1));
   };
 
   const handleSaveRoute = async () => {
@@ -184,22 +207,23 @@ export default function SupervisorHomeScreen({ navigation }) {
 
     setIsSavingRoute(true);
     try {
+      const routePayload = {
+        nombre: routeNombre,
+        descripcion: routeDescripcion,
+        geometria_ruta: routePolygon,
+      };
+
       if (editingRoute) {
-        await updateRoute(editingRoute.id, {
-          nombre: routeNombre,
-          descripcion: routeDescripcion,
-        });
-        Alert.alert('✅ Actualizado', 'La ruta fue actualizada con éxito.');
+        await updateRoute(editingRoute.id, routePayload);
+        Alert.alert('✅ Actualizado', 'La ruta y su delimitación geográfica fueron actualizadas.');
       } else {
-        await createRoute({
-          nombre: routeNombre,
-          descripcion: routeDescripcion,
-        });
-        Alert.alert('🎉 Ruta Creada', 'La nueva ruta ha sido agregada al sistema.');
+        await createRoute(routePayload);
+        Alert.alert('🎉 Ruta Creada', 'La nueva ruta y sus calles delimitadas han sido registradas en Supabase.');
       }
       setRouteModalVisible(false);
       await loadData();
     } catch (err) {
+      console.error('[SupervisorHome] Error guardando ruta:', err);
       Alert.alert('Error', err.message || 'No se pudo guardar la ruta en Supabase.');
     } finally {
       setIsSavingRoute(false);
@@ -442,6 +466,13 @@ export default function SupervisorHomeScreen({ navigation }) {
                   <Text style={styles.cardSubTitle}>
                     {item.descripcion || 'Sector territorial de recolección'}
                   </Text>
+                  {Array.isArray(item.geometria_ruta) && item.geometria_ruta.length > 0 ? (
+                    <View style={styles.routeGeoTag}>
+                      <Text style={styles.routeGeoTagText}>
+                        📐 {item.geometria_ruta.length} {item.geometria_ruta.length === 1 ? 'vértice' : 'calles/vértices trazados'}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
 
@@ -677,54 +708,112 @@ export default function SupervisorHomeScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* ─── MODAL RUTA ───────────────────────────────────────────────────── */}
+      {/* ─── MODAL RUTA CON SELECCIÓN GEOGRÁFICA ─────────────────────────────── */}
       <Modal visible={routeModalVisible} transparent={true} animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              {editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}
-            </Text>
-            <Text style={styles.modalSubtitle}>
-              Definición territorial para los camiones de Palín.
-            </Text>
+          <View style={[styles.modalCard, styles.routeModalCard]}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 10 }}>
+              <Text style={styles.modalTitle}>
+                {editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}
+              </Text>
+              <Text style={styles.modalSubtitle}>
+                Definición territorial y delimitación cartográfica para Palín.
+              </Text>
 
-            <Text style={styles.inputLabel}>Nombre de la Ruta *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ej. Zona 6 — Rincón Grande y Periférico"
-              value={routeNombre}
-              onChangeText={setRouteNombre}
-            />
+              <Text style={styles.inputLabel}>Nombre de la Ruta *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Ej. Zona 6 — Rincón Grande y Periférico"
+                value={routeNombre}
+                onChangeText={setRouteNombre}
+              />
 
-            <Text style={styles.inputLabel}>Descripción / Sectores que Abarca</Text>
-            <TextInput
-              style={[styles.input, { height: 70, textAlignVertical: 'top' }]}
-              placeholder="Ej. Callejones 1 al 4, sector de la línea férrea..."
-              value={routeDescripcion}
-              onChangeText={setRouteDescripcion}
-              multiline={true}
-            />
+              <Text style={styles.inputLabel}>Descripción / Sectores que Abarca</Text>
+              <TextInput
+                style={[styles.input, { height: 60, textAlignVertical: 'top' }]}
+                placeholder="Ej. Callejones 1 al 4, sector de la línea férrea..."
+                value={routeDescripcion}
+                onChangeText={setRouteDescripcion}
+                multiline={true}
+              />
 
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={styles.modalBtnCancel}
-                onPress={() => setRouteModalVisible(false)}
-                disabled={isSavingRoute}
-              >
-                <Text style={styles.modalBtnCancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtnSave, isSavingRoute && styles.modalBtnSaveDisabled]}
-                onPress={handleSaveRoute}
-                disabled={isSavingRoute}
-              >
-                {isSavingRoute ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalBtnSaveText}>Guardar</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+              {/* SELECCIÓN GEOGRÁFICA DE LA RUTA EN PALÍN */}
+              <View style={styles.geoSelectionBox}>
+                <View style={styles.geoSelectionHeader}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={styles.geoSelectionTitle}>🗺️ Delimitación de Calles (Palín)</Text>
+                    <Text style={styles.geoSelectionSubtitle}>
+                      Toca el mapa para fijar vértices y trazar el polígono de calles del sector.
+                    </Text>
+                  </View>
+                  <View style={styles.polygonBadge}>
+                    <Text style={styles.polygonBadgeText}>
+                      {routePolygon.length} {routePolygon.length === 1 ? 'punto' : 'puntos'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Mapa Interactivo para marcar puntos */}
+                <EcoMap
+                  centerCoordinate={{ latitude: 14.4042, longitude: -90.6978 }}
+                  polygonCoordinates={routePolygon}
+                  onMapPress={handleAddMapPoint}
+                  height={220}
+                  zoomLevel={15}
+                />
+
+                {/* Botones de Control de Geometría */}
+                <View style={styles.geoControlsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.geoControlBtn,
+                      routePolygon.length === 0 && styles.geoControlBtnDisabled,
+                    ]}
+                    onPress={handleUndoPolygonPoint}
+                    disabled={routePolygon.length === 0}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.geoControlBtnText}>↩️ Deshacer</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.geoControlBtn,
+                      styles.geoControlBtnClear,
+                      routePolygon.length === 0 && styles.geoControlBtnDisabled,
+                    ]}
+                    onPress={handleClearPolygon}
+                    disabled={routePolygon.length === 0}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.geoControlBtnText, styles.geoControlBtnClearText]}>
+                      🗑️ Limpiar trazado
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={styles.modalBtnCancel}
+                  onPress={() => setRouteModalVisible(false)}
+                  disabled={isSavingRoute}
+                >
+                  <Text style={styles.modalBtnCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtnSave, isSavingRoute && styles.modalBtnSaveDisabled]}
+                  onPress={handleSaveRoute}
+                  disabled={isSavingRoute}
+                >
+                  {isSavingRoute ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalBtnSaveText}>Guardar Ruta</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1291,5 +1380,93 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: THEME.colors.textSecondary,
     fontWeight: '600',
+  },
+  // Estilos de Selección Geográfica para Rutas
+  routeModalCard: {
+    maxHeight: '90%',
+    paddingVertical: 14,
+  },
+  routeGeoTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  routeGeoTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  geoSelectionBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  geoSelectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  geoSelectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  geoSelectionSubtitle: {
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    marginTop: 1,
+    lineHeight: 14,
+  },
+  polygonBadge: {
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+  },
+  polygonBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  geoControlsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  geoControlBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  geoControlBtnClear: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  geoControlBtnDisabled: {
+    opacity: 0.5,
+  },
+  geoControlBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+  },
+  geoControlBtnClearText: {
+    color: THEME.colors.danger,
   },
 });

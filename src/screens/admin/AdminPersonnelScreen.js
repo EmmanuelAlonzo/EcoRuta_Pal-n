@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -21,14 +21,21 @@ import {
   updatePersonnel,
   togglePersonnelStatus,
   deletePersonnel,
+  getTrucks,
+  getRoutes,
 } from '../../api/logistics';
 
 export default function AdminPersonnelScreen({ navigation }) {
   const [personnel, setPersonnel] = useState([]);
+  const [trucks, setTrucks] = useState([]);
+  const [routes, setRoutes] = useState([]);
   const [filterRole, setFilterRole] = useState('todos');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Referencia para evitar desmontar el componente padre tras la carga inicial
+  const hasLoadedRef = useRef(false);
 
   // Estado para Modal de Edición
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -36,18 +43,28 @@ export default function AdminPersonnelScreen({ navigation }) {
   const [editNombre, setEditNombre] = useState('');
   const [editTelefono, setEditTelefono] = useState('');
   const [editRol, setEditRol] = useState('operario');
+  const [editCamion, setEditCamion] = useState('');
+  const [editRuta, setEditRuta] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const loadData = useCallback(async (isPullToRefresh = false) => {
     if (isPullToRefresh) {
       setIsRefreshing(true);
-    } else {
+    } else if (!hasLoadedRef.current) {
+      // Solo desmontar/mostrar spinner completo en el primer montaje de la pantalla
       setIsLoading(true);
     }
 
     try {
-      const data = await getPersonnelList();
-      setPersonnel(data || []);
+      const [personnelData, trucksData, routesData] = await Promise.all([
+        getPersonnelList(),
+        getTrucks(false),
+        getRoutes(),
+      ]);
+      hasLoadedRef.current = true;
+      setPersonnel(personnelData || []);
+      setTrucks(trucksData || []);
+      setRoutes(routesData || []);
     } catch (err) {
       console.error('[AdminPersonnel] Error cargando personal:', err);
       Alert.alert('Error', 'No se pudo cargar la lista de colaboradores desde Supabase.');
@@ -60,7 +77,8 @@ export default function AdminPersonnelScreen({ navigation }) {
   useEffect(() => {
     loadData();
     const unsubscribe = navigation?.addListener?.('focus', () => {
-      loadData();
+      // Recarga silenciosa al enfocar para no parpadear ni desmontar
+      loadData(true);
     });
     return unsubscribe;
   }, [navigation, loadData]);
@@ -124,30 +142,51 @@ export default function AdminPersonnelScreen({ navigation }) {
 
   // ─── ACCIÓN: ABRIR MODAL DE EDICIÓN ───────────────────────────────────────
   const handleOpenEdit = (item) => {
+    if (!item) return;
     setSelectedUser(item);
     setEditNombre(item.nombre_completo || '');
     setEditTelefono(item.telefono || '');
     setEditRol(item.rol || 'operario');
+    setEditCamion(item.codigo_camion || '');
+    setEditRuta(item.ruta_asignada || '');
     setEditModalVisible(true);
   };
 
   const handleSaveEdit = async () => {
-    if (!editNombre.trim()) {
+    if (!selectedUser?.id) {
+      Alert.alert('Error', 'No hay ningún colaborador seleccionado.');
+      return;
+    }
+
+    if (!editNombre?.trim()) {
       Alert.alert('Campo requerido', 'Por favor ingresa el nombre completo del colaborador.');
       return;
     }
 
     setIsSaving(true);
     try {
-      await updatePersonnel(selectedUser.id, {
-        nombre_completo: editNombre,
-        telefono: editTelefono,
+      const isFieldStaff = editRol === 'operario' || editRol === 'piloto';
+      const updates = {
+        nombre_completo: editNombre.trim(),
+        telefono: editTelefono.trim(),
         rol: editRol,
-      });
+        codigo_camion: isFieldStaff ? (editCamion || null) : null,
+        ruta_asignada: isFieldStaff ? (editRuta || null) : null,
+      };
+
+      await updatePersonnel(selectedUser.id, updates);
+
+      // Actualizar estado local reactivo inmediatamente para evitar parpadeos y re-renders destructivos
+      setPersonnel((prev) =>
+        prev.map((u) => (u.id === selectedUser.id ? { ...u, ...updates } : u))
+      );
 
       setEditModalVisible(false);
       setSelectedUser(null);
-      await loadData();
+
+      // Recarga silenciosa en segundo plano (isPullToRefresh=true) para no desmontar el componente
+      loadData(true);
+
       Alert.alert('✅ Cambios Guardados', 'Los datos del colaborador se actualizaron exitosamente.');
     } catch (err) {
       console.error('[AdminPersonnel] Error guardando edición:', err);
@@ -414,6 +453,74 @@ export default function AdminPersonnelScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* Opciones de Asignación Territorial para Operarios y Pilotos */}
+              {(editRol === 'operario' || editRol === 'piloto') && (
+                <View style={styles.logisticsAssignmentBox}>
+                  <Text style={styles.inputLabel}>Camión Asignado (Flota Palín)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={editCamion}
+                    onChangeText={setEditCamion}
+                    placeholder="Ej. CAM-01"
+                    autoCapitalize="characters"
+                  />
+                  {trucks.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
+                      {trucks.map((t) => (
+                        <TouchableOpacity
+                          key={t.id?.toString()}
+                          style={[
+                            styles.quickSelectChip,
+                            editCamion === t.codigo && styles.quickSelectChipActive,
+                          ]}
+                          onPress={() => setEditCamion(t.codigo)}
+                        >
+                          <Text
+                            style={[
+                              styles.quickSelectChipText,
+                              editCamion === t.codigo && styles.quickSelectChipTextActive,
+                            ]}
+                          >
+                            🚛 {t.codigo}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+
+                  <Text style={[styles.inputLabel, { marginTop: 12 }]}>Ruta Asignada (Sectores)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={editRuta}
+                    onChangeText={setEditRuta}
+                    placeholder="Ej. Zona 1 — Casco Urbano"
+                  />
+                  {routes.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
+                      {routes.map((r) => (
+                        <TouchableOpacity
+                          key={r.id?.toString()}
+                          style={[
+                            styles.quickSelectChip,
+                            editRuta === r.nombre && styles.quickSelectChipActive,
+                          ]}
+                          onPress={() => setEditRuta(r.nombre)}
+                        >
+                          <Text
+                            style={[
+                              styles.quickSelectChipText,
+                              editRuta === r.nombre && styles.quickSelectChipTextActive,
+                            ]}
+                          >
+                            📍 {r.nombre}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                </View>
+              )}
 
               <View style={styles.modalActionsRow}>
                 <TouchableOpacity
@@ -813,5 +920,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  logisticsAssignmentBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  quickChipsRow: {
+    flexDirection: 'row',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  quickSelectChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginRight: 6,
+  },
+  quickSelectChipActive: {
+    backgroundColor: '#EDE9FE',
+    borderColor: THEME.roles.admin,
+  },
+  quickSelectChipText: {
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    fontWeight: '600',
+  },
+  quickSelectChipTextActive: {
+    color: THEME.roles.admin,
+    fontWeight: '800',
   },
 });

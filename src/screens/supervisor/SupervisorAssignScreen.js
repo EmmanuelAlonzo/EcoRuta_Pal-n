@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,10 @@ export default function SupervisorAssignScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Referencias para evitar re-renders y ciclos destructivos
+  const hasLoadedRef = useRef(false);
+  const selectedStaffRef = useRef(null);
+
   // Selecciones activas para la asignación
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [selectedTruck, setSelectedTruck] = useState('');
@@ -36,7 +40,8 @@ export default function SupervisorAssignScreen({ navigation }) {
   const loadData = useCallback(async (isPullToRefresh = false) => {
     if (isPullToRefresh) {
       setIsRefreshing(true);
-    } else {
+    } else if (!hasLoadedRef.current) {
+      // Solo desmontar / mostrar spinner en la carga inicial
       setIsLoading(true);
     }
 
@@ -52,15 +57,18 @@ export default function SupervisorAssignScreen({ navigation }) {
         (p) => (p.rol === 'operario' || p.rol === 'piloto') && p.activo !== false
       );
 
+      hasLoadedRef.current = true;
       setPersonnel(operationalStaff);
       setTrucks(trucksData || []);
       setRoutes(routesData || []);
 
       // Auto-seleccionar primer elemento si no hay ninguno seleccionado
-      if (operationalStaff.length > 0 && !selectedStaff) {
-        setSelectedStaff(operationalStaff[0]);
-        setSelectedTruck(operationalStaff[0].codigo_camion || (trucksData[0]?.codigo || 'CAM-01'));
-        setSelectedRoute(operationalStaff[0].ruta_asignada || (routesData[0]?.nombre || 'Zona 1'));
+      if (operationalStaff.length > 0 && !selectedStaffRef.current) {
+        const first = operationalStaff[0];
+        selectedStaffRef.current = first;
+        setSelectedStaff(first);
+        setSelectedTruck(first.codigo_camion || (trucksData[0]?.codigo || 'CAM-01'));
+        setSelectedRoute(first.ruta_asignada || (routesData[0]?.nombre || 'Zona 1'));
       }
     } catch (err) {
       console.error('[SupervisorAssign] Error cargando asignaciones:', err);
@@ -69,17 +77,20 @@ export default function SupervisorAssignScreen({ navigation }) {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedStaff]);
+  }, []);
 
   useEffect(() => {
     loadData();
     const unsubscribe = navigation?.addListener?.('focus', () => {
-      loadData();
+      // Recarga silenciosa en segundo plano
+      loadData(true);
     });
     return unsubscribe;
   }, [navigation, loadData]);
 
   const handleSelectStaff = (staff) => {
+    if (!staff) return;
+    selectedStaffRef.current = staff;
     setSelectedStaff(staff);
     if (staff.codigo_camion) {
       setSelectedTruck(staff.codigo_camion);
@@ -107,7 +118,22 @@ export default function SupervisorAssignScreen({ navigation }) {
         ruta_asignada: selectedRoute,
       });
 
-      await loadData();
+      // Actualizar estado local reactivo inmediatamente para evitar parpadeos y reseteos
+      setPersonnel((prev) =>
+        prev.map((p) =>
+          p.id === selectedStaff.id
+            ? { ...p, codigo_camion: selectedTruck, ruta_asignada: selectedRoute }
+            : p
+        )
+      );
+
+      setSelectedStaff((prev) =>
+        prev ? { ...prev, codigo_camion: selectedTruck, ruta_asignada: selectedRoute } : prev
+      );
+
+      // Recarga silenciosa en segundo plano
+      await loadData(true);
+
       Alert.alert(
         '✅ Asignación Guardada',
         `Se asignó el camión "${selectedTruck}" y la ruta "${selectedRoute}" a ${selectedStaff.nombre_completo}. Cuando inicie sesión, sus selectores aparecerán autocompletados.`

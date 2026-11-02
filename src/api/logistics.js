@@ -222,28 +222,48 @@ export const getRoutes = async () => {
 };
 
 /**
- * Registra una nueva ruta de recolección
+ * Registra una nueva ruta de recolección con delimitación geográfica
  * @param {object} ruta
  * @returns {Promise<object>}
  */
-export const createRoute = async ({ nombre, descripcion }) => {
+export const createRoute = async ({ nombre, descripcion, geometria_ruta = [] }) => {
   const payload = {
     nombre: nombre.trim(),
     descripcion: descripcion ? descripcion.trim() : 'Ruta urbana de recolección',
   };
 
-  const { data, error } = await supabase
-    .from('rutas')
-    .insert([payload])
-    .select()
-    .single();
-
-  if (error) {
-    console.error('[logistics.js] Error creando ruta:', error);
-    throw error;
+  if (Array.isArray(geometria_ruta) && geometria_ruta.length > 0) {
+    payload.geometria_ruta = geometria_ruta;
   }
 
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('rutas')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      // Si la columna geometria_ruta no existe aún en la tabla rutas, guardar sin geometría
+      if (error.message && error.message.toLowerCase().includes('geometria_ruta')) {
+        console.warn('[logistics.js] Columna geometria_ruta no encontrada en Supabase. Guardando sin polígono.');
+        delete payload.geometria_ruta;
+        const fallbackRes = await supabase
+          .from('rutas')
+          .insert([payload])
+          .select()
+          .single();
+        if (fallbackRes.error) throw fallbackRes.error;
+        return fallbackRes.data;
+      }
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[logistics.js] Error creando ruta:', err);
+    throw err;
+  }
 };
 
 /**
@@ -252,24 +272,43 @@ export const createRoute = async ({ nombre, descripcion }) => {
  * @param {object} updates
  * @returns {Promise<object>}
  */
-export const updateRoute = async (id, { nombre, descripcion }) => {
+export const updateRoute = async (id, { nombre, descripcion, geometria_ruta }) => {
   const payload = {};
   if (nombre !== undefined) payload.nombre = nombre.trim();
   if (descripcion !== undefined) payload.descripcion = descripcion.trim();
-
-  const { data, error } = await supabase
-    .from('rutas')
-    .update(payload)
-    .eq('id', id)
-    .select()
-    .single();
-
-  if (error) {
-    console.error('[logistics.js] Error actualizando ruta:', error);
-    throw error;
+  if (geometria_ruta !== undefined && Array.isArray(geometria_ruta)) {
+    payload.geometria_ruta = geometria_ruta;
   }
 
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('rutas')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.message && error.message.toLowerCase().includes('geometria_ruta')) {
+        console.warn('[logistics.js] Columna geometria_ruta no encontrada al actualizar. Guardando campos básicos.');
+        delete payload.geometria_ruta;
+        const fallbackRes = await supabase
+          .from('rutas')
+          .update(payload)
+          .eq('id', id)
+          .select()
+          .single();
+        if (fallbackRes.error) throw fallbackRes.error;
+        return fallbackRes.data;
+      }
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[logistics.js] Error actualizando ruta:', err);
+    throw err;
+  }
 };
 
 /**
