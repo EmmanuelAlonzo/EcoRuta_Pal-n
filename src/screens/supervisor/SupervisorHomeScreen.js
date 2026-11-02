@@ -129,7 +129,7 @@ export default function SupervisorHomeScreen({ navigation }) {
           placa: truckPlaca,
           activo: truckActivo,
         });
-        Alert.alert('🎉 Camión Registrado', `Se agregó la unidad ${truckCodigo} a la flota municipal.`);
+        Alert.alert('🎉 Camión Registrado', `Se agregó la unidad ${truckCodigo} a la flota EcoRuta.`);
       }
       setTruckModalVisible(false);
       await loadData();
@@ -272,7 +272,7 @@ export default function SupervisorHomeScreen({ navigation }) {
           Panel Logístico: {profile?.nombre_completo || 'Supervisor'}
         </Text>
         <Text style={styles.deptText}>
-          Flota Municipal y Rutas Territoriales • Palín
+          Flota EcoRuta y Rutas Territoriales • Palín
         </Text>
 
         {/* Pestañas de Alternancia: Camiones vs Rutas vs Mapa */}
@@ -569,7 +569,7 @@ export default function SupervisorHomeScreen({ navigation }) {
               </View>
               <View style={styles.legendItem}>
                 <Text style={styles.legendIcon}>📍</Text>
-                <Text style={styles.legendText}>Cuadrante Municipal</Text>
+                <Text style={styles.legendText}>Cuadrante de Cobertura</Text>
               </View>
             </View>
           </View>

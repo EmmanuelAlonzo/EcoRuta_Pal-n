@@ -114,7 +114,7 @@ export const getCitizenVerification = async (clienteId) => {
   try {
     const { data, error } = await supabase
       .from('perfiles')
-      .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion')
+      .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion, puntos_reciclaje, puntos_acumulados')
       .eq('id', clienteId)
       .maybeSingle();
 
@@ -135,6 +135,7 @@ export const getCitizenVerification = async (clienteId) => {
         direccion: data.direccion || 'Dirección no especificada en el sistema',
         activo: data.activo !== false,
         estado_suscripcion: data.estado_suscripcion || (data.activo !== false ? 'Activo' : 'Suspendido'),
+        puntos_reciclaje: data.puntos_reciclaje ?? data.puntos_acumulados ?? 0,
         email: data.email || null,
         telefono: data.telefono || null,
       },

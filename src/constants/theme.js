@@ -22,5 +22,6 @@ export const THEME = {
     piloto: '#0284C7',
     supervisor: '#D97706',
     admin: '#8B5CF6',
+    afiliado: '#0D9488',
   },
 };

@@ -322,10 +322,10 @@ export default function LoginScreen() {
           {/* Pie de página institucional */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
-              Municipalidad de Palín • Gestión Ambiental
+              Gestión EcoRuta • Emprendimiento Privado
             </Text>
             <Text style={styles.footerSubText}>
-              EcoRuta Palín — Conectando comunidad y reciclaje
+              EcoRuta Palín — Servicio Privado de Recolección y Reciclaje
             </Text>
           </View>
         </ScrollView>

@@ -173,7 +173,7 @@ export default function OperatorSetupScreen({ navigation }) {
         <View style={styles.topBar}>
           <View style={styles.badgeRow}>
             <View style={styles.roleTag}>
-              <Text style={styles.roleTagText}>🚛 Operario Municipal</Text>
+              <Text style={styles.roleTagText}>🚛 Operaria EcoRuta</Text>
             </View>
           </View>
           <TouchableOpacity style={styles.logoutBtn} onPress={logout} activeOpacity={0.8}>
@@ -188,7 +188,7 @@ export default function OperatorSetupScreen({ navigation }) {
           </View>
           <Text style={styles.title}>Inicialización de Turno</Text>
           <Text style={styles.subtitle}>
-            Municipalidad de Palín • Gestión Ambiental
+            Gestión EcoRuta • Emprendimiento Local
           </Text>
           <Text style={styles.description}>
             Para habilitar el escáner QR y registrar las recolecciones, confirma

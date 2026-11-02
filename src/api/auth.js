@@ -58,7 +58,7 @@ export const loginWithEmail = async (email, password) => {
     } catch (signOutErr) {
       console.warn('[auth.js] Error al cerrar sesión de cuenta inactiva:', signOutErr);
     }
-    throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado por la administración municipal.');
+    throw new Error('Cuenta suspendida. Tu acceso al sistema ha sido inhabilitado por la administración de EcoRuta.');
   }
 
   return {

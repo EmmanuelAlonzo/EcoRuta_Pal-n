@@ -140,7 +140,7 @@ export default function AdminPersonnelScreen({ navigation }) {
   const handleDelete = (item) => {
     Alert.alert(
       '⚠️ Eliminar Colaborador',
-      `¿Estás seguro de eliminar el perfil de ${item.nombre_completo || 'este colaborador'}?\n\nEsta acción quitará el rol del personal municipal.`,
+      `¿Estás seguro de eliminar el perfil de ${item.nombre_completo || 'este colaborador'}?\n\nEsta acción quitará el rol del personal de EcoRuta.`,
       [
         { text: 'Volver', style: 'cancel' },
         {
@@ -244,7 +244,7 @@ export default function AdminPersonnelScreen({ navigation }) {
           <View>
             <Text style={styles.title}>👥 Gestión de Personal</Text>
             <Text style={styles.subtitle}>
-              Municipalidad de Palín • Operarios, Pilotos y Supervisores
+              Gestión EcoRuta • Cuadrillas, Pilotos y Supervisores
             </Text>
           </View>
         </View>
@@ -429,7 +429,7 @@ export default function AdminPersonnelScreen({ navigation }) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Editar Colaborador</Text>
             <Text style={styles.modalSubtitle}>
-              Actualiza el rol y la información del colaborador municipal.
+              Actualiza el rol y la información del colaborador de EcoRuta.
             </Text>
 
             <ScrollView showsVerticalScrollIndicator={false}>

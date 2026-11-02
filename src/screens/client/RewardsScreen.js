@@ -237,7 +237,7 @@ export default function RewardsScreen({ navigation }) {
               <Text style={styles.emptyIcon}>🎁</Text>
               <Text style={styles.emptyTitle}>No hay incentivos disponibles</Text>
               <Text style={styles.emptyDesc}>
-                Pronto se publicarán nuevas recompensas de la municipalidad y comercios de Palín.
+                Pronto se publicarán nuevas recompensas de Gestión EcoRuta y comercios aliados de Palín.
               </Text>
             </View>
           }

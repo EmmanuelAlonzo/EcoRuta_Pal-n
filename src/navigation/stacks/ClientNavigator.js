@@ -2,6 +2,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import ClientHomeScreen from '../../screens/client/ClientHomeScreen';
+import ClientWalletScreen from '../../screens/client/ClientWalletScreen';
 import RewardsScreen from '../../screens/client/RewardsScreen';
 import PlaceholderTabScreen from '../../screens/common/PlaceholderTabScreen';
 import { THEME } from '../../constants/theme';
@@ -30,6 +31,14 @@ export default function ClientNavigator() {
         options={{
           tabBarLabel: 'Inicio',
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>🌱</Text>,
+        }}
+      />
+      <Tab.Screen
+        name="ClientWallet"
+        component={ClientWalletScreen}
+        options={{
+          tabBarLabel: 'Billetera',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>💳</Text>,
         }}
       />
       <Tab.Screen

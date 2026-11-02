@@ -233,16 +233,20 @@ export default function ClientHomeScreen({ navigation }) {
 
           <View style={styles.metricsGrid}>
             {/* Tarjeta 1: Eco-Puntos */}
-            <View style={[styles.metricCard, styles.metricCardPrimary]}>
+            <TouchableOpacity
+              style={[styles.metricCard, styles.metricCardPrimary]}
+              onPress={() => navigation?.navigate?.('ClientWallet')}
+              activeOpacity={0.85}
+            >
               <View style={styles.metricCardTop}>
                 <View style={[styles.metricIconCircle, { backgroundColor: '#D1FAE5' }]}>
                   <Text style={styles.metricIconText}>🍃</Text>
                 </View>
-                <Text style={styles.metricPill}>Saldo Activo</Text>
+                <Text style={styles.metricPill}>💳 Ver Billetera</Text>
               </View>
               <Text style={styles.metricValuePrimary}>{points}</Text>
               <Text style={styles.metricLabelPrimary}>Eco-Puntos acumulados</Text>
-            </View>
+            </TouchableOpacity>
 
             <View style={styles.metricsTwoColumnRow}>
               {/* Tarjeta 2: CO2 Reducido */}
@@ -314,10 +318,10 @@ export default function ClientHomeScreen({ navigation }) {
             {/* Franja Superior de la Credencial */}
             <View style={styles.ticketHeaderBand}>
               <View style={styles.ticketSealRow}>
-                <Text style={styles.ticketSealIcon}>🏛️</Text>
+                <Text style={styles.ticketSealIcon}>🌱</Text>
                 <View>
-                  <Text style={styles.ticketOrgTitle}>MUNICIPALIDAD DE PALÍN</Text>
-                  <Text style={styles.ticketOrgSubtitle}>Dirección de Gestión Ambiental y Reciclaje</Text>
+                  <Text style={styles.ticketOrgTitle}>GESTIÓN ECORUTA PALÍN</Text>
+                  <Text style={styles.ticketOrgSubtitle}>Servicio Privado de Recolección y Reciclaje</Text>
                 </View>
               </View>
               <View style={styles.ticketBadge}>
@@ -415,7 +419,7 @@ export default function ClientHomeScreen({ navigation }) {
               <Text style={styles.emptyStateIcon}>🚛</Text>
               <Text style={styles.emptyStateTitle}>Aún no hay entregas registradas</Text>
               <Text style={styles.emptyStateDesc}>
-                Cuando el camión recolector municipal pase frente a tu hogar y escanee tu credencial digital, verás reflejados tus comprobantes y eco-puntos en este panel.
+                Cuando la cuadrilla de recolección EcoRuta pase frente a tu hogar y escanee tu credencial digital, verás reflejados tus comprobantes y eco-puntos en este panel.
               </Text>
             </View>
           ) : (

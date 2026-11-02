@@ -104,8 +104,8 @@ export const generateAdminReportCSV = async () => {
 
   // Encabezado institucional
   csvLines.push(UTF8_BOM + [
-    escapeCSV('MUNICIPALIDAD DE PALÍN, ESCUINTLA'),
-    escapeCSV('DIRECCIÓN DE GESTIÓN AMBIENTAL Y SERVICIOS PÚBLICOS'),
+    escapeCSV('GESTIÓN ECORUTA PALÍN'),
+    escapeCSV('SERVICIO PRIVADO DE RECOLECCIÓN Y RECICLAJE'),
     escapeCSV('SISTEMA ECORUTA PALÍN - REPORTE GERENCIAL'),
   ].join(','));
 
@@ -181,7 +181,7 @@ export const generateAdminReportCSV = async () => {
       escapeCSV(cliente.nombre_completo || 'Ciudadano'),
       escapeCSV(cliente.email || 'N/A'),
       escapeCSV(incentivo.nombre || 'Premio Ecológico'),
-      escapeCSV(incentivo.comercio || 'Municipalidad de Palín'),
+      escapeCSV(incentivo.comercio || 'Gestión EcoRuta'),
       escapeCSV(c.puntos_descontados || 0),
       escapeCSV(c.estado ? c.estado.toUpperCase() : 'PENDIENTE'),
     ].join(','));

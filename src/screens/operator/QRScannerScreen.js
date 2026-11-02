@@ -659,7 +659,7 @@ export default function QRScannerScreen({ navigation }) {
               ) : null}
             </View>
 
-            {/* 3. SECCIÓN: ESTADO DE SUSCRIPCIÓN MUNICIPAL */}
+            {/* 3. SECCIÓN: ESTADO DE SUSCRIPCIÓN ECORUTA */}
             <View style={styles.subscriptionCard}>
               <Text style={styles.subscriptionLabel}>ESTADO DE SUSCRIPCIÓN:</Text>
               <View

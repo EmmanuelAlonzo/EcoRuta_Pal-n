@@ -8,6 +8,7 @@ export const ROLES = {
   PILOTO: 'piloto',
   SUPERVISOR: 'supervisor',
   ADMIN: 'admin',
+  AFILIADO: 'afiliado',
 };
 
 export const ROLE_LABELS = {
@@ -15,5 +16,6 @@ export const ROLE_LABELS = {
   [ROLES.OPERARIO]: 'Operario de Recolección',
   [ROLES.PILOTO]: 'Piloto de Unidad',
   [ROLES.SUPERVISOR]: 'Supervisor de Logística',
-  [ROLES.ADMIN]: 'Administrador Municipal',
+  [ROLES.ADMIN]: 'Administrador EcoRuta',
+  [ROLES.AFILIADO]: 'Comercio Afiliado',
 };

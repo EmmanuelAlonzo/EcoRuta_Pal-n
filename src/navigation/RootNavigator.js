@@ -10,6 +10,7 @@ import ClientNavigator from './stacks/ClientNavigator';
 import OperatorNavigator from './stacks/OperatorNavigator';
 import SupervisorNavigator from './stacks/SupervisorNavigator';
 import AdminNavigator from './stacks/AdminNavigator';
+import AffiliateNavigator from './stacks/AffiliateNavigator';
 
 const Stack = createNativeStackNavigator();
 
@@ -54,12 +55,17 @@ export default function RootNavigator() {
             <Stack.Screen name="AdminApp" component={AdminNavigator} />
           )}
 
+          {role === ROLES.AFILIADO && (
+            <Stack.Screen name="AffiliateApp" component={AffiliateNavigator} />
+          )}
+
           {/* Fallback de seguridad en caso de rol no reconocido */}
           {role !== ROLES.CLIENTE &&
             role !== ROLES.OPERARIO &&
             role !== ROLES.PILOTO &&
             role !== ROLES.SUPERVISOR &&
-            role !== ROLES.ADMIN && (
+            role !== ROLES.ADMIN &&
+            role !== ROLES.AFILIADO && (
               <Stack.Screen name="DefaultClientApp" component={ClientNavigator} />
             )}
         </>

@@ -1,7 +1,7 @@
 import { supabase } from '../services/supabase';
 
 /**
- * Servicio API para el Módulo de Administración Municipal (EcoRuta Palín)
+ * Servicio API para el Módulo de Administración (EcoRuta Palín)
  * Conexión directa y exclusiva a Supabase Database (100% real, sin datos simulados).
  */
 
@@ -73,12 +73,26 @@ export const getGlobalMetrics = async () => {
       totalClientes = perfilesCount;
     }
 
+    // 4. Consultar ofertas pendientes de auditoría comercial ('revision_admin')
+    let pendingOfferAudits = 0;
+    const { count: offersCount, error: offersErr } = await supabase
+      .from('catalogo_incentivos')
+      .select('*', { count: 'exact', head: true })
+      .eq('estado_aprobacion', 'revision_admin');
+
+    if (offersErr) {
+      console.warn('[admin.js] Error al contar ofertas pendientes:', offersErr.message);
+    } else if (offersCount !== null) {
+      pendingOfferAudits = offersCount;
+    }
+
     return {
       totalKg: parseFloat(totalKg.toFixed(1)),
       totalPuntos,
       totalRecolecciones: (collections || []).length,
       pendingCanjes,
       totalClientes,
+      pendingOfferAudits,
       materialStats,
     };
   } catch (error) {
@@ -90,6 +104,7 @@ export const getGlobalMetrics = async () => {
       totalRecolecciones: 0,
       pendingCanjes: 0,
       totalClientes: 0,
+      pendingOfferAudits: 0,
       materialStats: { plastico: 0, carton: 0, aluminio: 0, vidrio: 0, mixto: 0 },
     };
   }
@@ -288,3 +303,134 @@ export const rejectRedemption = async (canjeId) => {
 
   return updatedCanje;
 };
+
+/**
+ * Consulta la tabla `catalogo_incentivos` filtrando por ofertas pendientes de auditoría:
+ * Por defecto filtra por `estado_aprobacion: 'revision_admin'`.
+ * 
+ * @param {string} [statusFilter='revision_admin'] - Estado de aprobación a filtrar o 'all'
+ * @returns {Promise<Array>} Lista de ofertas
+ */
+export const getOffersPendingAudit = async (statusFilter = 'revision_admin') => {
+  try {
+    let query = supabase
+      .from('catalogo_incentivos')
+      .select('*');
+
+    if (statusFilter && statusFilter !== 'all') {
+      query = query.eq('estado_aprobacion', statusFilter);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[admin.js] Error al consultar ofertas para auditoría:', error);
+      throw error;
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error('[admin.js] Excepción obteniendo ofertas en auditoría:', err);
+    throw err;
+  }
+};
+
+/**
+ * Ejecuta la auditoría de una oferta comercial por parte del Administrador de EcoRuta:
+ * Permite ajustar textos, puntos requeridos (para asegurar rentabilidad), stock y notas_admin.
+ * 
+ * Opciones de decisión:
+ * 1. 'aprobar': cambia `estado_aprobacion` a 'aprobado' y `activo: true`.
+ * 2. 'contrapropuesta': cambia `estado_aprobacion` a 'contrapropuesta' y `activo: false`.
+ * 3. 'rechazar': cambia `estado_aprobacion` a 'rechazado' y `activo: false`.
+ * 
+ * @param {object} param0
+ * @param {string|number} param0.offerId - ID de la oferta
+ * @param {'aprobar'|'contrapropuesta'|'rechazar'} param0.action - Acción administrativa
+ * @param {string} [param0.nombre] - Nombre de la oferta (editado o intacto)
+ * @param {string} [param0.descripcion] - Descripción de la oferta (editada o intacta)
+ * @param {number|string} [param0.costoPuntos] - Puntos requeridos recalculados
+ * @param {number|string} [param0.stock] - Stock ajustado
+ * @param {string} [param0.notasAdmin] - Justificación o notas del administrador
+ * @returns {Promise<{ success: boolean, offer: object, action: string }>}
+ */
+export const auditCommercialOffer = async ({
+  offerId,
+  action,
+  nombre,
+  descripcion,
+  costoPuntos,
+  stock,
+  notasAdmin = '',
+}) => {
+  if (!offerId) {
+    throw new Error('El ID de la oferta es obligatorio para la auditoría.');
+  }
+
+  let nuevoEstado = 'revision_admin';
+  let activo = false;
+
+  if (action === 'aprobar') {
+    nuevoEstado = 'aprobado';
+    activo = true;
+  } else if (action === 'contrapropuesta') {
+    nuevoEstado = 'contrapropuesta';
+    activo = false;
+  } else if (action === 'rechazar') {
+    nuevoEstado = 'rechazado';
+    activo = false;
+  } else {
+    throw new Error(`Acción de auditoría no reconocida: ${action}`);
+  }
+
+  const updatePayload = {
+    estado_aprobacion: nuevoEstado,
+    activo,
+    notas_admin: (notasAdmin || '').trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (nombre !== undefined && nombre !== null) {
+    updatePayload.nombre = nombre.trim();
+  }
+  if (descripcion !== undefined && descripcion !== null) {
+    updatePayload.descripcion = descripcion.trim();
+  }
+  if (costoPuntos !== undefined && costoPuntos !== null) {
+    const pts = parseInt(costoPuntos, 10);
+    if (!isNaN(pts) && pts > 0) {
+      updatePayload.costo_puntos = pts;
+    }
+  }
+  if (stock !== undefined && stock !== null) {
+    const stk = parseInt(stock, 10);
+    if (!isNaN(stk) && stk >= 0) {
+      updatePayload.stock = stk;
+    }
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('catalogo_incentivos')
+      .update(updatePayload)
+      .eq('id', offerId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.error('[admin.js] Error al auditar oferta comercial:', error);
+      throw new Error(error.message || 'No se pudo guardar la auditoría en Supabase.');
+    }
+
+    return {
+      success: true,
+      offer: data || updatePayload,
+      action,
+      nuevoEstado,
+    };
+  } catch (err) {
+    console.error('[admin.js] Excepción auditCommercialOffer:', err);
+    throw err;
+  }
+};
+

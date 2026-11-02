@@ -70,7 +70,15 @@ export const getAvailableIncentives = async () => {
     throw error;
   }
 
-  return data || [];
+  // Solo las ofertas aprobadas se muestran a los clientes
+  const filtered = (data || []).filter((item) => {
+    if (item.estado_aprobacion) {
+      return item.estado_aprobacion === 'aprobado';
+    }
+    return true;
+  });
+
+  return filtered;
 };
 
 /**
@@ -212,3 +220,12 @@ export const redeemIncentive = async (userId, incentiveId, costPuntos) => {
     throw error;
   }
 };
+
+// Re-exportar funciones del módulo financiero
+export {
+  createSubscriptionPayment,
+  getSubscriptionPayments,
+  getAffiliatedMerchants,
+  PALIN_AFFILIATED_MERCHANTS,
+} from './financial';
+

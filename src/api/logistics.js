@@ -7,7 +7,7 @@ import { supabase } from '../services/supabase';
 // ─── GESTIÓN DE PERSONAL (ADMINISTRADOR) ────────────────────────────────────
 
 /**
- * Consulta la lista de colaboradores municipales (operarios, pilotos y supervisores)
+ * Consulta la lista de colaboradores de EcoRuta (operarios, pilotos y supervisores)
  * @returns {Promise<Array>}
  */
 export const getPersonnelList = async () => {
@@ -130,7 +130,7 @@ export const getTrucks = async (onlyActive = false) => {
 };
 
 /**
- * Registra un nuevo camión en la flota municipal
+ * Registra un nuevo camión en la flota EcoRuta
  * @param {object} camion
  * @returns {Promise<object>}
  */
