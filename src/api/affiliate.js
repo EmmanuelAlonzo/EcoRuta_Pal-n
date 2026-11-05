@@ -2,7 +2,7 @@ import { supabase } from '../services/supabase';
 
 /**
  * Servicio API para Comercios Afiliados (EcoRuta Palín) - Modelo CPA
- * Maneja el canje de eco-puntos por descuentos en compras reales,
+ * Maneja el canje de puntos por descuentos en compras reales,
  * deducción de saldo del cliente y cálculo del saldo a pagar a EcoRuta
  * por concepto de comisión por cliente referido (Q1.50 por canje).
  */
@@ -23,65 +23,54 @@ export const validateRedemption = async (params) => {
     return { found: false, profile: null, error: 'Código de vecino no proporcionado.' };
   }
 
-  const cleanCode = code.trim();
+  // Limpieza de caracteres invisibles, saltos de línea y normalización a mayúsculas
+  const cleanCode = code.trim().toUpperCase();
   if (!cleanCode) {
     return { found: false, profile: null, error: 'Código de vecino vacío.' };
   }
 
-  try {
-    // 1. Búsqueda principal por `codigo_vecino` (insensible a mayúsculas/minúsculas)
-    const { data: matchCode, error: codeErr } = await supabase
-      .from('perfiles')
-      .select('id, nombre_completo, direccion, telefono, puntos_reciclaje, puntos_acumulados, activo, estado_suscripcion, rol, codigo_vecino, avatar_url')
-      .ilike('codigo_vecino', cleanCode)
-      .maybeSingle();
+  console.log('Buscando código limpio:', cleanCode);
 
-    if (codeErr) {
-      console.warn('[affiliate.js] Advertencia consultando por codigo_vecino:', codeErr.message);
+  try {
+    let query = supabase
+      .from('perfiles')
+      .select('id, nombre_completo, direccion, telefono, puntos_reciclaje, puntos_acumulados, activo, rol, codigo_vecino');
+
+    // Si cleanCode tiene formato UUID (más de 20 caracteres), busca por .eq('id', cleanCode)
+    // Si es un código corto, usa .ilike('codigo_vecino', cleanCode)
+    if (cleanCode.length > 20) {
+      query = query.eq('id', cleanCode);
+    } else {
+      query = query.ilike('codigo_vecino', cleanCode);
     }
 
-    if (matchCode) {
+    const { data: match, error } = await query.maybeSingle();
+
+    console.log('Respuesta BD:', match, error);
+
+    if (error) {
+      console.warn('[affiliate.js] Advertencia consultando Supabase:', error.message);
+    }
+
+    if (match) {
       return {
         found: true,
         profile: {
-          ...matchCode,
-          puntos_reciclaje: matchCode.puntos_reciclaje ?? matchCode.puntos_acumulados ?? 0,
+          ...match,
+          puntos_acumulados: match.puntos_acumulados ?? 0,
+          puntos_reciclaje: match.puntos_reciclaje ?? 0,
         },
       };
     }
 
-    // 2. Fallback: Búsqueda por UUID `id` si el código cumple formato UUID
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanCode);
-    if (isUuid) {
-      const { data: matchId, error: idErr } = await supabase
-        .from('perfiles')
-        .select('id, nombre_completo, direccion, telefono, puntos_reciclaje, puntos_acumulados, activo, estado_suscripcion, rol, codigo_vecino, avatar_url')
-        .eq('id', cleanCode)
-        .maybeSingle();
-
-      if (idErr) {
-        console.warn('[affiliate.js] Advertencia consultando por UUID:', idErr.message);
-      }
-
-      if (matchId) {
-        return {
-          found: true,
-          profile: {
-            ...matchId,
-            puntos_reciclaje: matchId.puntos_reciclaje ?? matchId.puntos_acumulados ?? 0,
-          },
-        };
-      }
-    }
-
-    // 3. Fallback inteligente: buscar en perfiles recientes si el código coincide parcialmente
+    // Fallback inteligente: buscar en perfiles recientes si el código coincide parcialmente
     const { data: recentProfiles } = await supabase
       .from('perfiles')
-      .select('id, nombre_completo, direccion, telefono, puntos_reciclaje, puntos_acumulados, activo, estado_suscripcion, rol, codigo_vecino, avatar_url')
+      .select('id, nombre_completo, direccion, telefono, puntos_reciclaje, puntos_acumulados, activo, rol, codigo_vecino')
       .limit(60);
 
     if (recentProfiles && recentProfiles.length > 0) {
-      const normalizedQuery = cleanCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const normalizedQuery = cleanCode.replace(/[^A-Z0-9]/g, '');
       const foundCandidate = recentProfiles.find((p) => {
         const cVecino = (p.codigo_vecino || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (cVecino && (cVecino === normalizedQuery || cVecino.includes(normalizedQuery))) {
@@ -99,7 +88,8 @@ export const validateRedemption = async (params) => {
           found: true,
           profile: {
             ...foundCandidate,
-            puntos_reciclaje: foundCandidate.puntos_reciclaje ?? foundCandidate.puntos_acumulados ?? 0,
+            puntos_acumulados: foundCandidate.puntos_acumulados ?? 0,
+            puntos_reciclaje: foundCandidate.puntos_reciclaje ?? 0,
           },
         };
       }
@@ -171,61 +161,70 @@ export const processRedemption = async ({
 
   const points = parseInt(pointsToRedeem, 10);
   if (isNaN(points) || points <= 0) {
-    throw new Error('La cantidad de eco-puntos a canjear debe ser mayor a 0.');
+    throw new Error('La cantidad de puntos a canjear debe ser mayor a 0.');
   }
 
-  // 1. Consultar y validar saldo real del cliente en `perfiles` buscando por `codigo_vecino`
+  // 1. Consultar y validar saldo real del cliente en `perfiles` buscando por `codigo_vecino` o UUID
   let clientProfile = null;
-  const isUuid = clientId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId);
+  const rawCode = (codigoVecino || clientId || '').toString();
+  const cleanCode = rawCode.trim().toUpperCase();
 
-  if (codigoVecino || (!isUuid && clientId)) {
-    const codeQuery = (codigoVecino || clientId).trim();
-    const { data: byCode } = await supabase
-      .from('perfiles')
-      .select('id, nombre_completo, puntos_reciclaje, puntos_acumulados, codigo_vecino')
-      .ilike('codigo_vecino', codeQuery)
-      .maybeSingle();
+  console.log('Buscando código limpio para débito:', cleanCode);
 
-    if (byCode) {
-      clientProfile = byCode;
-    }
+  let query = supabase
+    .from('perfiles')
+    .select('id, nombre_completo, puntos_reciclaje, puntos_acumulados, codigo_vecino');
+
+  if (cleanCode.length > 20) {
+    query = query.eq('id', cleanCode);
+  } else {
+    query = query.ilike('codigo_vecino', cleanCode);
   }
 
+  const { data: match, error: searchErr } = await query.maybeSingle();
+  console.log('Respuesta BD débito:', match, searchErr);
+
+  if (match) {
+    clientProfile = match;
+  }
+
+  // Fallback si venía un UUID como clientId diferente a cleanCode
   if (!clientProfile && clientId) {
-    const { data: byId, error: profileErr } = await supabase
-      .from('perfiles')
-      .select('id, nombre_completo, puntos_reciclaje, puntos_acumulados, codigo_vecino')
-      .eq('id', clientId)
-      .maybeSingle();
+    const cleanClientId = clientId.toString().trim().toUpperCase();
+    if (cleanClientId !== cleanCode) {
+      const { data: byId } = await supabase
+        .from('perfiles')
+        .select('id, nombre_completo, puntos_reciclaje, puntos_acumulados, codigo_vecino')
+        .eq('id', cleanClientId)
+        .maybeSingle();
 
-    if (!profileErr && byId) {
-      clientProfile = byId;
+      if (byId) clientProfile = byId;
     }
   }
 
-  // Fallback por búsqueda normalizada
-  if (!clientProfile && (codigoVecino || clientId)) {
-    const norm = (codigoVecino || clientId).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // Fallback por búsqueda normalizada (eliminando caracteres no alfanuméricos)
+  if (!clientProfile && cleanCode) {
+    const norm = cleanCode.replace(/[^A-Z0-9]/g, '');
     const { data: recents } = await supabase
       .from('perfiles')
       .select('id, nombre_completo, puntos_reciclaje, puntos_acumulados, codigo_vecino')
       .limit(60);
 
     if (recents) {
-      const match = recents.find((p) => {
+      const candidate = recents.find((p) => {
         const cV = (p.codigo_vecino || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
         return cV && (cV === norm || cV.includes(norm));
       });
-      if (match) clientProfile = match;
+      if (candidate) clientProfile = candidate;
     }
   }
 
   if (!clientProfile) {
-    throw new Error(`No se pudo verificar el perfil del cliente para el código "${codigoVecino || clientId}".`);
+    throw new Error(`No se pudo verificar el perfil del cliente para el código "${cleanCode || codigoVecino || clientId}".`);
   }
 
   const resolvedClientId = clientProfile.id;
-  const currentPoints = clientProfile.puntos_reciclaje ?? clientProfile.puntos_acumulados ?? 0;
+  const currentPoints = clientProfile.puntos_acumulados ?? 0;
   if (currentPoints < points) {
     throw new Error(
       `Saldo insuficiente. El cliente tiene ${currentPoints} puntos disponibles y se requieren ${points} puntos para este descuento.`
@@ -359,13 +358,12 @@ export const processRedemption = async ({
   // ── DESCONTAR PUNTOS Y REGISTRAR CANJE (DESPUÉS DE VALIDACIONES) ─────────────
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // 4. Calcular nuevo saldo y descontar en `perfiles`
+  // 4. Calcular nuevo saldo y descontar en `perfiles` estrictamente en `puntos_acumulados`
   const nuevoSaldo = Math.max(0, currentPoints - points);
   const { error: updateProfileErr } = await supabase
     .from('perfiles')
     .update({
-      puntos_reciclaje: nuevoSaldo,
-      ...(clientProfile.puntos_acumulados !== undefined ? { puntos_acumulados: nuevoSaldo } : {}),
+      puntos_acumulados: nuevoSaldo,
       updated_at: new Date().toISOString(),
     })
     .eq('id', resolvedClientId);

@@ -389,13 +389,13 @@ export default function ClientProfileScreen({ navigation }) {
               <Text style={styles.pointsIcon}>🍃</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.pointsTitle}>Saldo de Eco-Puntos</Text>
+              <Text style={styles.pointsTitle}>Saldo de Puntos Acumulados</Text>
               <Text style={styles.pointsSub}>
-                Puntos disponibles para canjear en comercios de Palín
+                Puntos disponibles para canjear en comercios de Palín • Histórico reciclaje: {profile?.puntos_reciclaje ?? 0} pts
               </Text>
             </View>
             <Text style={styles.pointsNumber}>
-              {profile?.puntos_reciclaje ?? profile?.puntos_acumulados ?? 0} pts
+              {profile?.puntos_acumulados ?? 0} pts
             </Text>
           </View>
         </ScrollView>

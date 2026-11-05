@@ -22,7 +22,6 @@ import { getClientProfile } from '../../api/client';
 import {
   createSubscriptionPayment,
   getSubscriptionPayments,
-  getAffiliatedMerchants,
 } from '../../api/financial';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -30,16 +29,14 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 export default function ClientWalletScreen({ navigation }) {
   const user = useAuthStore((state) => state.user);
   const profile = useAuthStore((state) => state.profile);
+  const updateProfileState = useAuthStore((state) => state.updateProfileState);
 
   // Estados generales
-  const [activeSegment, setActiveSegment] = useState('billetera'); // 'billetera' | 'comercios'
   const [userProfile, setUserProfile] = useState(profile);
   const [userPoints, setUserPoints] = useState(
-    profile?.puntos_reciclaje ?? profile?.puntos_acumulados ?? 0
+    profile?.puntos_acumulados ?? 0
   );
   const [subscriptionPayments, setSubscriptionPayments] = useState([]);
-  const [merchants, setMerchants] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState('todos');
 
   // Estados de carga
   const [isLoading, setIsLoading] = useState(true);
@@ -74,9 +71,10 @@ export default function ClientWalletScreen({ navigation }) {
         // 1. Refrescar datos del perfil (puntos y suscripción)
         const updatedProfile = await getClientProfile(user.id);
         if (updatedProfile) {
+          updateProfileState(updatedProfile);
           setUserProfile(updatedProfile);
           setUserPoints(
-            updatedProfile.puntos_reciclaje ?? updatedProfile.puntos_acumulados ?? 0
+            updatedProfile.puntos_acumulados ?? 0
           );
         }
 
@@ -84,10 +82,6 @@ export default function ClientWalletScreen({ navigation }) {
         const payments = await getSubscriptionPayments(user.id);
         setSubscriptionPayments(payments || []);
       }
-
-      // 3. Consultar red de comercios afiliados
-      const remoteMerchants = await getAffiliatedMerchants();
-      setMerchants(remoteMerchants || []);
     } catch (err) {
       console.error('[ClientWallet] Error cargando datos financieros:', err);
     } finally {
@@ -323,51 +317,6 @@ export default function ClientWalletScreen({ navigation }) {
     codigoVecino
   )}&margin=10`;
 
-  // Helper para psicología de recompensas e indicador visual de promoción
-  const getPromoTypeBadge = (tipo, fallbackText = '') => {
-    const raw = `${tipo || ''} ${fallbackText || ''}`.toLowerCase();
-    if (raw.includes('2x1') || raw.includes('dos por uno')) {
-      return {
-        icon: '🎁',
-        label: 'Promoción 2x1',
-        sub: '2x1 Exclusivo',
-        bg: '#FDF2F8',
-        color: '#BE185D',
-        border: '#FBCFE8',
-        tagBg: '#FCE7F3',
-      };
-    }
-    if (raw.includes('%') || raw.includes('porcentaje')) {
-      return {
-        icon: '📉',
-        label: 'Porcentaje (%)',
-        sub: 'Descuento %',
-        bg: '#EFF6FF',
-        color: '#1D4ED8',
-        border: '#BFDBFE',
-        tagBg: '#DBEAFE',
-      };
-    }
-    return {
-      icon: '💰',
-      label: 'Descuento (Q)',
-      sub: 'Monto Fijo (Q)',
-      bg: '#F0FDF4',
-      color: '#15803D',
-      border: '#BBF7D0',
-      tagBg: '#DCFCE7',
-    };
-  };
-
-  // Filtrado de comercios
-  const categories = ['todos', 'Abarrotes', 'Hogar', 'Cafetería', 'Salud', 'Automotriz'];
-  const filteredMerchants =
-    selectedCategory === 'todos'
-      ? merchants
-      : merchants.filter((m) =>
-          (m.categoria || '').toLowerCase().includes(selectedCategory.toLowerCase())
-        );
-
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* ── BARRA SUPERIOR INSTITUCIONAL ───────────────────────────────────── */}
@@ -379,41 +328,8 @@ export default function ClientWalletScreen({ navigation }) {
           </View>
         </View>
         <Text style={styles.headerSubtitle}>
-          Gestión de eco-puntos, pago de suscripción y comercios aliados
+          Gestión de saldo, suscripción ciudadana y pagos del servicio municipal
         </Text>
-
-        {/* SELECTOR DE PESTAÑAS / SEGMENTOS */}
-        <View style={styles.segmentContainer}>
-          <TouchableOpacity
-            style={[styles.segmentBtn, activeSegment === 'billetera' && styles.segmentBtnActive]}
-            onPress={() => setActiveSegment('billetera')}
-            activeOpacity={0.8}
-          >
-            <Text
-              style={[
-                styles.segmentBtnText,
-                activeSegment === 'billetera' && styles.segmentBtnTextActive,
-              ]}
-            >
-              💳 Mi Billetera & Pagos
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.segmentBtn, activeSegment === 'comercios' && styles.segmentBtnActive]}
-            onPress={() => setActiveSegment('comercios')}
-            activeOpacity={0.8}
-          >
-            <Text
-              style={[
-                styles.segmentBtnText,
-                activeSegment === 'comercios' && styles.segmentBtnTextActive,
-              ]}
-            >
-              🏪 Comercios Afiliados
-            </Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
       {isLoading ? (
@@ -434,10 +350,8 @@ export default function ClientWalletScreen({ navigation }) {
             />
           }
         >
-          {activeSegment === 'billetera' ? (
-            <>
-              {/* ── 1. TARJETA DIGITAL DE ECO-BILLETERA ─────────────────────── */}
-              <View style={styles.walletHeroCard}>
+          {/* ── 1. TARJETA DIGITAL DE ECO-BILLETERA ─────────────────────── */}
+          <View style={styles.walletHeroCard}>
                 <View style={styles.walletCardBackgroundDecor} />
                 <View style={styles.walletHeaderRow}>
                   <View style={styles.walletLogoGroup}>
@@ -459,7 +373,7 @@ export default function ClientWalletScreen({ navigation }) {
                     <Text style={styles.walletBalanceSuffix}>pts</Text>
                   </View>
                   <Text style={styles.walletEquivalentText}>
-                    Úsalos para desbloquear descuentos, porcentajes y ofertas 2x1 en comercios exclusivos de Palín.
+                    Puntos acumulados por reciclaje y cumplimiento del servicio municipal de recolección.
                   </Text>
                 </View>
 
@@ -470,30 +384,26 @@ export default function ClientWalletScreen({ navigation }) {
                       {userProfile?.nombre_completo || 'Vecino de Palín'}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.redeemQuickBtn}
-                    onPress={() => setActiveSegment('comercios')}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.redeemQuickBtnText}>Canjear ⭐</Text>
-                  </TouchableOpacity>
+                  <View style={styles.walletStatusBadge}>
+                    <Text style={styles.walletStatusBadgeText}>🛡️ Vecino Activo</Text>
+                  </View>
                 </View>
               </View>
 
-              {/* ── 2. TARJETA ECO-PASE: CÓDIGO QR DE CANJE (CÓDIGO DE VECINO) ── */}
+              {/* ── 2. TARJETA ECO-PASE: IDENTIFICADOR CIUDADANO (CÓDIGO DE VECINO) ── */}
               <View style={styles.qrPassCard}>
                 <View style={styles.qrPassHeader}>
                   <View style={{ flex: 1 }}>
                     <View style={styles.qrPassBadge}>
                       <Text style={styles.qrPassBadgeText}>🎫 ECO-PASE CIUDADANO</Text>
                     </View>
-                    <Text style={styles.qrPassTitle}>Código de Canje en Comercios</Text>
+                    <Text style={styles.qrPassTitle}>Identificador de Cuenta Municipal</Text>
                   </View>
-                  <Text style={styles.qrPassHeaderIcon}>🏪</Text>
+                  <Text style={styles.qrPassHeaderIcon}>🏛️</Text>
                 </View>
 
                 <Text style={styles.qrPassDesc}>
-                  Presenta este código QR o dicta tu código de vecino en las tiendas aliadas para canjear tus puntos por descuentos.
+                  Presenta este código QR o proporciona tu código de vecino para validar tu cuenta en pagos presenciales y recepción del servicio.
                 </Text>
 
                 <View style={styles.qrPassImageFrame}>
@@ -509,7 +419,7 @@ export default function ClientWalletScreen({ navigation }) {
                   <Text style={styles.neighborCodeHeader}>CÓDIGO DE VECINO</Text>
                   <Text style={styles.neighborCodeBig}>{codigoVecino}</Text>
                   <Text style={styles.neighborCodeHelp}>
-                    Léelo en caja o permítele al cajero escanearlo con pistola láser POS
+                    Léelo en ventanilla de recaudación o permítele al receptor escanearlo con pistola láser POS
                   </Text>
                 </View>
               </View>
@@ -636,163 +546,6 @@ export default function ClientWalletScreen({ navigation }) {
                   })
                 )}
               </View>
-            </>
-          ) : (
-            /* ── PESTAÑA: COMERCIOS AFILIADOS ─────────────────────────────── */
-            <View>
-              {/* Resumen de puntos para canje */}
-              <View style={styles.merchantsPointsBanner}>
-                <View>
-                  <Text style={styles.merchantBannerLabel}>SALDO DE CANJE</Text>
-                  <Text style={styles.merchantBannerPoints}>{userPoints} Eco-Puntos</Text>
-                </View>
-                <Text style={styles.merchantBannerHint}>
-                  Visita los establecimientos de Palín y presenta tu app para aplicar tus descuentos.
-                </Text>
-              </View>
-
-              {/* Filtros de categoría */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-                {categories.map((cat) => {
-                  const isSelected = selectedCategory === cat;
-                  return (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[styles.filterChip, isSelected && styles.filterChipActive]}
-                      onPress={() => setSelectedCategory(cat)}
-                    >
-                      <Text
-                        style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}
-                      >
-                        {cat === 'todos' ? '🌟 Todos' : cat}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Lista de comercios */}
-              <View style={styles.merchantsList}>
-                {filteredMerchants.length === 0 ? (
-                  <View style={styles.emptyPaymentsBox}>
-                    <Text style={styles.emptyPaymentsIcon}>🏪</Text>
-                    <Text style={styles.emptyPaymentsTitle}>No hay comercios en esta categoría</Text>
-                    <Text style={styles.emptyPaymentsDesc}>
-                      Pronto se sumarán más establecimientos comerciales en Palín.
-                    </Text>
-                  </View>
-                ) : (
-                  filteredMerchants.map((m) => {
-                    const canAfford = userPoints >= (m.puntos_requeridos || 0);
-                    const promoBadge = getPromoTypeBadge(m.tipo_promocion, m.descuento || m.nombre);
-
-                    return (
-                      <View key={m.id?.toString()} style={styles.merchantCard}>
-                        <View style={styles.merchantCardTop}>
-                          <View style={styles.merchantIconCircle}>
-                            <Text style={styles.merchantIcon}>{m.icono || '🏪'}</Text>
-                          </View>
-                          <View style={{ flex: 1, marginLeft: 12 }}>
-                            <Text style={styles.merchantName}>{m.nombre}</Text>
-                            <Text style={styles.merchantCategory}>{m.categoria}</Text>
-                          </View>
-                          <View style={styles.merchantPointsRequiredBadge}>
-                            <Text style={styles.merchantPointsRequiredText}>
-                              ⭐ {m.puntos_requeridos || 50} pts
-                            </Text>
-                          </View>
-                        </View>
-
-                        {/* Banner del beneficio con indicador visual atractivo de tipo de promoción */}
-                        <View
-                          style={[
-                            styles.discountBanner,
-                            {
-                              backgroundColor: promoBadge.bg,
-                              borderColor: promoBadge.border,
-                              borderLeftColor: promoBadge.color,
-                            },
-                          ]}
-                        >
-                          <View style={styles.discountBannerHeader}>
-                            <Text style={[styles.discountTag, { color: promoBadge.color }]}>
-                              🏷️ BENEFICIO EXCLUSIVO
-                            </Text>
-                            <View
-                              style={[
-                                styles.promoIndicatorBadge,
-                                {
-                                  backgroundColor: promoBadge.tagBg,
-                                  borderColor: promoBadge.border,
-                                },
-                              ]}
-                            >
-                              <Text style={styles.promoIndicatorIcon}>{promoBadge.icon}</Text>
-                              <Text
-                                style={[
-                                  styles.promoIndicatorText,
-                                  { color: promoBadge.color },
-                                ]}
-                              >
-                                {promoBadge.label}
-                              </Text>
-                            </View>
-                          </View>
-                          <Text style={[styles.discountTitle, { color: promoBadge.color }]}>
-                            {m.descuento || m.nombre}
-                          </Text>
-                          {m.descripcion && m.descripcion !== m.descuento ? (
-                            <Text style={styles.discountSubDesc}>{m.descripcion}</Text>
-                          ) : null}
-                        </View>
-
-                        {/* Detalles de contacto y ubicación */}
-                        <View style={styles.merchantMetaRow}>
-                          <Text style={styles.merchantMetaText}>📍 {m.direccion}</Text>
-                        </View>
-                        {m.horario ? (
-                          <View style={styles.merchantMetaRow}>
-                            <Text style={styles.merchantMetaText}>🕒 {m.horario}</Text>
-                          </View>
-                        ) : null}
-
-                        {/* Botón de acción */}
-                        <TouchableOpacity
-                          style={[
-                            styles.merchantRedeemBtn,
-                            !canAfford && styles.merchantRedeemBtnDisabled,
-                          ]}
-                          onPress={() => {
-                            if (!canAfford) {
-                              Alert.alert(
-                                'Puntos Insuficientes',
-                                `Necesitas ${m.puntos_requeridos} pts para canjear este beneficio en ${m.nombre}. Tienes ${userPoints} pts.`
-                              );
-                              return;
-                            }
-                            Alert.alert(
-                              '🎉 Beneficio en Comercio',
-                              `Acércate a "${m.nombre}" en ${m.direccion} y presenta tu Eco-Pase con tu QR o comprobante de ${m.puntos_requeridos} eco-puntos para reclamar: "${m.descuento}".`
-                            );
-                          }}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.merchantRedeemBtnText,
-                              !canAfford && styles.merchantRedeemBtnTextDisabled,
-                            ]}
-                          >
-                            {canAfford ? 'Reclamar en el Comercio 🏪' : `Faltan ${(m.puntos_requeridos || 0) - userPoints} pts`}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  })
-                )}
-              </View>
-            </View>
-          )}
         </ScrollView>
       )}
 
@@ -1097,36 +850,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.colors.textSecondary,
     marginTop: 2,
-    marginBottom: 12,
-  },
-  segmentContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 3,
-  },
-  segmentBtn: {
-    flex: 1,
-    paddingVertical: 9,
-    alignItems: 'center',
-    borderRadius: 10,
-  },
-  segmentBtnActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  segmentBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  segmentBtnTextActive: {
-    color: '#065F46',
-    fontWeight: '800',
+    marginBottom: 4,
   },
   scrollContent: {
     padding: 20,
@@ -1262,20 +986,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 2,
   },
-  redeemQuickBtn: {
-    backgroundColor: '#F59E0B',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+  walletStatusBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.35)',
   },
-  redeemQuickBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 12,
+  walletStatusBadgeText: {
+    color: '#34D399',
+    fontWeight: '700',
+    fontSize: 11,
   },
   // Eco-Pase QR
   qrPassCard: {
@@ -1558,183 +1280,6 @@ const styles = StyleSheet.create({
   },
   paymentStatusTextApproved: {
     color: '#065F46',
-  },
-  // Comercios
-  merchantsPointsBanner: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  merchantBannerLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#B45309',
-  },
-  merchantBannerPoints: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#92400E',
-    marginTop: 2,
-  },
-  merchantBannerHint: {
-    fontSize: 12,
-    color: '#78350F',
-    marginTop: 4,
-    lineHeight: 16,
-  },
-  filterScroll: {
-    marginBottom: 16,
-  },
-  filterChip: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    marginRight: 8,
-  },
-  filterChipActive: {
-    backgroundColor: '#065F46',
-    borderColor: '#065F46',
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  filterChipTextActive: {
-    color: '#FFFFFF',
-  },
-  merchantsList: {
-    gap: 14,
-  },
-  merchantCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  merchantCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  merchantIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  merchantIcon: {
-    fontSize: 22,
-  },
-  merchantName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: THEME.colors.textPrimary,
-  },
-  merchantCategory: {
-    fontSize: 11,
-    color: THEME.colors.textSecondary,
-    fontWeight: '600',
-  },
-  merchantPointsRequiredBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  merchantPointsRequiredText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  discountBanner: {
-    backgroundColor: '#F0FDF4',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderLeftWidth: 4,
-    borderLeftColor: '#10B981',
-  },
-  discountBannerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  promoIndicatorBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  promoIndicatorIcon: {
-    fontSize: 11,
-    marginRight: 4,
-  },
-  promoIndicatorText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-  discountTag: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  discountTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  discountSubDesc: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 4,
-    lineHeight: 15,
-  },
-  merchantMetaRow: {
-    marginBottom: 4,
-  },
-  merchantMetaText: {
-    fontSize: 11,
-    color: '#64748B',
-  },
-  merchantRedeemBtn: {
-    backgroundColor: THEME.colors.primary,
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  merchantRedeemBtnDisabled: {
-    backgroundColor: '#E2E8F0',
-  },
-  merchantRedeemBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  merchantRedeemBtnTextDisabled: {
-    color: '#94A3B8',
   },
   // Modal de Pago
   modalOverlay: {

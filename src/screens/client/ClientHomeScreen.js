@@ -21,17 +21,19 @@ export default function ClientHomeScreen({ navigation }) {
   const logout = useAuthStore((state) => state.logout);
 
   const [points, setPoints] = useState(
-    profile?.puntos_reciclaje ?? profile?.puntos_acumulados ?? 0
+    profile?.puntos_acumulados ?? 0
   );
   const [collections, setCollections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ─── CÁLCULO DE MÉTRICAS DE IMPACTO AMBIENTAL ─────────────────────────────
+  // Se basan en el histórico total reciclado (puntos_reciclaje)
+  const historicoPts = profile?.puntos_reciclaje ?? points;
   // (puntos * 0.5) = kg de CO2 reducidos
-  const co2Reducido = (points * 0.5).toFixed(1);
+  const co2Reducido = (historicoPts * 0.5).toFixed(1);
   // (puntos / 100) = árboles salvados
-  const arbolesSalvados = (points / 100).toFixed(2);
+  const arbolesSalvados = (historicoPts / 100).toFixed(2);
 
   // ─── GAMIFICACIÓN Y SISTEMA DE NIVELES ECOLÓGICOS ─────────────────────────
   const getEcoLevel = (pts) => {
@@ -143,8 +145,8 @@ export default function ClientHomeScreen({ navigation }) {
         try {
           const updatedProfile = await getClientProfile(user.id);
           if (updatedProfile) {
-            const currentBalance =
-              updatedProfile.puntos_reciclaje ?? updatedProfile.puntos_acumulados ?? 0;
+            useAuthStore.getState().updateProfileState(updatedProfile);
+            const currentBalance = updatedProfile.puntos_acumulados ?? 0;
             setPoints(currentBalance);
           }
         } catch (profileErr) {
@@ -240,7 +242,7 @@ export default function ClientHomeScreen({ navigation }) {
           </View>
 
           <View style={styles.metricsGrid}>
-            {/* Tarjeta 1: Eco-Puntos */}
+            {/* Tarjeta 1: Puntos Disponibles */}
             <TouchableOpacity
               style={[styles.metricCard, styles.metricCardPrimary]}
               onPress={() => navigation?.navigate?.('ClientWallet')}
@@ -253,7 +255,7 @@ export default function ClientHomeScreen({ navigation }) {
                 <Text style={styles.metricPill}>💳 Ver Billetera</Text>
               </View>
               <Text style={styles.metricValuePrimary}>{points}</Text>
-              <Text style={styles.metricLabelPrimary}>Eco-Puntos acumulados</Text>
+              <Text style={styles.metricLabelPrimary}>Puntos disponibles</Text>
             </TouchableOpacity>
 
             <View style={styles.metricsTwoColumnRow}>
@@ -436,7 +438,7 @@ export default function ClientHomeScreen({ navigation }) {
               <Text style={styles.emptyStateIcon}>🚛</Text>
               <Text style={styles.emptyStateTitle}>Aún no hay entregas registradas</Text>
               <Text style={styles.emptyStateDesc}>
-                Cuando la cuadrilla de recolección EcoRuta pase frente a tu hogar y escanee tu credencial digital, verás reflejados tus comprobantes y eco-puntos en este panel.
+                Cuando la cuadrilla de recolección EcoRuta pase frente a tu hogar y escanee tu credencial digital, verás reflejados tus comprobantes y puntos en este panel.
               </Text>
             </View>
           ) : (

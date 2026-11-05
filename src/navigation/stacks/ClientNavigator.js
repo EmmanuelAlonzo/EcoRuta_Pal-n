@@ -54,8 +54,8 @@ export default function ClientNavigator() {
         name="ClientRewards"
         component={RewardsScreen}
         options={{
-          tabBarLabel: 'Incentivos',
-          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🎁</Text>,
+          tabBarLabel: 'Comercios',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🏪</Text>,
         }}
       />
       <Tab.Screen

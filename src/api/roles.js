@@ -61,58 +61,9 @@ export const PERMISSION_ACTIONS = [
   { key: 'borrar', label: 'Borrar', icon: '🗑️', desc: 'Eliminar registros o suspender accesos' },
 ];
 
-/**
- * Roles empresariales predeterminados para respaldo e inicialización
- */
-export const DEFAULT_ENTERPRISE_ROLES = [
-  {
-    id: 'rol-auditor-general',
-    nombre: 'Auditor General',
-    descripcion: 'Supervisa la legalidad comercial y la trazabilidad de recolecciones e incentivos.',
-    activo: true,
-    permisos: [
-      { modulo: 'Logística', leer: true, escribir: false, borrar: false },
-      { modulo: 'Finanzas', leer: true, escribir: false, borrar: false },
-      { modulo: 'Auditoría', leer: true, escribir: true, borrar: true },
-    ],
-  },
-  {
-    id: 'rol-coordinador-logistica',
-    nombre: 'Coordinador de Logística',
-    descripcion: 'Gestión integral de cuadrillas operativas, ruteo en Palín y control de flota.',
-    activo: true,
-    permisos: [
-      { modulo: 'Logística', leer: true, escribir: true, borrar: true },
-      { modulo: 'Finanzas', leer: true, escribir: false, borrar: false },
-      { modulo: 'Auditoría', leer: true, escribir: false, borrar: false },
-    ],
-  },
-  {
-    id: 'rol-analista-finanzas',
-    nombre: 'Analista de Finanzas',
-    descripcion: 'Administración de redenciones, saldo de puntos y liquidación con comercios.',
-    activo: true,
-    permisos: [
-      { modulo: 'Logística', leer: true, escribir: false, borrar: false },
-      { modulo: 'Finanzas', leer: true, escribir: true, borrar: true },
-      { modulo: 'Auditoría', leer: true, escribir: false, borrar: false },
-    ],
-  },
-  {
-    id: 'rol-director-operaciones',
-    nombre: 'Director de Operaciones',
-    descripcion: 'Acceso directivo transversal a logística y finanzas con supervisión global.',
-    activo: true,
-    permisos: [
-      { modulo: 'Logística', leer: true, escribir: true, borrar: false },
-      { modulo: 'Finanzas', leer: true, escribir: true, borrar: false },
-      { modulo: 'Auditoría', leer: true, escribir: true, borrar: false },
-    ],
-  },
-];
-
-// Cache en memoria para garantizar continuidad operativa y evitar parpadeos
-let memoryRolesCache = [...DEFAULT_ENTERPRISE_ROLES];
+// Cache en memoria inicializado vacío (los datos se cargan 100% desde Supabase)
+export const DEFAULT_ENTERPRISE_ROLES = [];
+let memoryRolesCache = [];
 let memoryEnterpriseUsersCache = [];
 
 /**
@@ -128,14 +79,12 @@ export const getEnterpriseRoles = async () => {
       .order('nombre', { ascending: true });
 
     if (rolesErr) {
-      console.warn('[roles.js] Tabla roles_empresariales no disponible o vacía:', rolesErr.message);
-      return memoryRolesCache;
+      console.warn('[roles.js] Tabla roles_empresariales:', rolesErr.message);
+      return [];
     }
 
     if (!roles || roles.length === 0) {
-      // Si la tabla existe pero está vacía, sembrar roles por defecto
-      console.log('[roles.js] Tabla roles_empresariales sin registros. Usando plantilla inicial.');
-      return memoryRolesCache;
+      return [];
     }
 
     // 2. Consultar permisos asociados en `permisos_roles`

@@ -16,6 +16,7 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -42,11 +43,15 @@ export default function AffiliateHomeScreen({ navigation }) {
   // Referencia para autoenfoque de pistola de código de barras en Web
   const webInputRef = useRef(null);
 
-  // Pestaña activa
+  // Pestaña activa y foco
+  const isFocused = useIsFocused();
   const [activeTab, setActiveTab] = useState('caja'); // 'caja' | 'ofertas' | 'liquidacion' | 'historial'
+  const isCajaTab = activeTab === 'caja' || activeTab === 'Caja QR';
 
   // Permisos de cámara
   const [permission, requestPermission] = useCameraPermissions();
+  const hasPermission = Boolean(permission?.granted);
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [scannedCitizenId, setScannedCitizenId] = useState('');
   const [manualCode, setManualCode] = useState('');
@@ -338,7 +343,7 @@ export default function AffiliateHomeScreen({ navigation }) {
     }
     const pointsNum = parseInt(offerPoints, 10);
     if (isNaN(pointsNum) || pointsNum <= 0) {
-      Alert.alert('Puntos Inválidos', 'Ingresa una cantidad de eco-puntos válida (mayor a 0).');
+      Alert.alert('Puntos Inválidos', 'Ingresa una cantidad de puntos válida (mayor a 0).');
       return;
     }
     const stockNum = parseInt(offerStock, 10);
@@ -508,6 +513,34 @@ export default function AffiliateHomeScreen({ navigation }) {
     return unsubscribe;
   }, [navigation, loadSettlement, loadOffers]);
 
+  // Solicitar permiso de la cámara automáticamente solo cuando el usuario entre a la pestaña "Caja QR"
+  useEffect(() => {
+    if (isCajaTab && Platform.OS !== 'web') {
+      if (!permission?.granted) {
+        requestPermission();
+      }
+    }
+  }, [isCajaTab]);
+
+  // Montaje retrasado (300ms) para estabilizar el hardware de la cámara en Android y evitar pantalla negra
+  useEffect(() => {
+    let timer = null;
+    const isCaja = activeTab === 'caja' || activeTab === 'Caja QR';
+
+    if (isCaja && hasPermission && isFocused && Platform.OS !== 'web') {
+      timer = setTimeout(() => {
+        setIsCameraReady(true);
+      }, 300);
+    } else {
+      setIsCameraReady(false);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      setIsCameraReady(false);
+    };
+  }, [activeTab, hasPermission, isFocused]);
+
   // ─── REINICIAR ESCÁNER Y ENFOCAR PISTOLA EN WEB ──────────────────────────
   const resetScanner = useCallback(() => {
     setScanned(false);
@@ -553,6 +586,7 @@ export default function AffiliateHomeScreen({ navigation }) {
             direccion: 'Sin dirección oficial en base de datos',
             activo: false,
             estado_suscripcion: 'No Encontrado',
+            puntos_acumulados: 0,
             puntos_reciclaje: 0,
             notFound: true,
           });
@@ -567,6 +601,7 @@ export default function AffiliateHomeScreen({ navigation }) {
           direccion: 'Sin conexión a Supabase',
           activo: false,
           estado_suscripcion: 'Desconocido',
+          puntos_acumulados: 0,
           puntos_reciclaje: 0,
         });
         setVerificationModalVisible(true);
@@ -646,11 +681,11 @@ export default function AffiliateHomeScreen({ navigation }) {
     }
 
     if (isNaN(points) || points <= 0) {
-      Alert.alert('Puntos Inválidos', 'Ingresa la cantidad de eco-puntos a canjear.');
+      Alert.alert('Puntos Inválidos', 'Ingresa la cantidad de puntos a canjear.');
       return;
     }
 
-    const availablePoints = citizenData?.puntos_reciclaje || 0;
+    const availablePoints = citizenData?.puntos_acumulados ?? 0;
     if (points > availablePoints) {
       Alert.alert(
         'Puntos Insuficientes',
@@ -824,7 +859,7 @@ export default function AffiliateHomeScreen({ navigation }) {
                 <Text style={styles.offersHeroIcon}>📢</Text>
               </View>
               <Text style={styles.offersHeroDesc}>
-                Publica ofertas y recompensas exclusivas para que los vecinos de Palín las canjeen con sus eco-puntos.
+                Publica ofertas y recompensas exclusivas para que los vecinos de Palín las canjeen con sus puntos acumulados.
               </Text>
               <TouchableOpacity
                 style={styles.proposeNewOfferBtn}
@@ -1065,34 +1100,48 @@ export default function AffiliateHomeScreen({ navigation }) {
                 </View>
 
                 {/* Cámara Nativa / Visor QR */}
-                <View style={styles.scannerWrapper}>
-                  {permission?.granted ? (
-                    <View style={styles.cameraBox}>
+                <View style={styles.cameraBox}>
+                  {isCameraReady ? (
+                    <>
                       <CameraView
-                        style={StyleSheet.absoluteFillObject}
+                        style={{ width: '100%', height: '100%', flex: 1 }}
                         facing="back"
                         barcodeScannerSettings={{
                           barcodeTypes: ['qr'],
                         }}
                         onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
                       />
-                      <View style={styles.scannerCrosshair} />
+                      <View style={styles.scannerCrosshair} pointerEvents="none" />
                       {scanned && (
                         <View style={styles.scannedOverlay}>
                           <ActivityIndicator size="small" color="#FFFFFF" />
                           <Text style={styles.scannedOverlayText}>QR detectado. Validando...</Text>
                         </View>
                       )}
-                    </View>
+                    </>
                   ) : (
                     <View style={styles.permissionBox}>
-                      <Text style={styles.permissionIcon}>🔒</Text>
-                      <Text style={styles.permissionTitle}>Permiso de Cámara Requerido</Text>
-                      <Text style={styles.permissionSub}>
-                        Para escanear el QR del cliente desde tu dispositivo móvil, concede acceso a la cámara.
+                      {permission === null || (!isCameraReady && hasPermission) ? (
+                        <ActivityIndicator size="small" color="#2DD4BF" style={{ marginBottom: 10 }} />
+                      ) : (
+                        <Text style={styles.permissionIcon}>📷</Text>
+                      )}
+                      <Text style={styles.permissionTitle}>
+                        {permission === null || (!isCameraReady && hasPermission)
+                          ? 'Iniciando Cámara...'
+                          : 'Cámara Desactivada'}
                       </Text>
-                      <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-                        <Text style={styles.permissionBtnText}>Conceder Permiso</Text>
+                      <Text style={styles.permissionSub}>
+                        {permission === null || (!isCameraReady && hasPermission)
+                          ? 'Preparando hardware de video...'
+                          : 'Para escanear el QR del cliente desde tu dispositivo móvil, activa la cámara.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.permissionBtn}
+                        onPress={requestPermission}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.permissionBtnText}>Activar Cámara</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -1337,21 +1386,26 @@ export default function AffiliateHomeScreen({ navigation }) {
 
               <View style={styles.antifraudDivider} />
 
-              <Text style={styles.antifraudFieldLabel}>SALDO ACTUAL DE ECO-PUNTOS</Text>
+              <Text style={styles.antifraudFieldLabel}>SALDO ACTUAL (PUNTOS ACUMULADOS)</Text>
               <View style={styles.pointsHighlightBox}>
                 <Text style={styles.pointsHighlightVal}>
-                  ⭐ {citizenData?.puntos_reciclaje || 0} pts
+                  ⭐ {citizenData?.puntos_acumulados ?? 0} pts
                 </Text>
                 <Text style={styles.pointsHighlightEquiv}>
-                  ≈ Q{((citizenData?.puntos_reciclaje || 0) * 0.1).toFixed(2)} en descuentos
+                  ≈ Q{(((citizenData?.puntos_acumulados ?? 0)) * 0.1).toFixed(2)} en descuentos
                 </Text>
+                {citizenData?.puntos_reciclaje !== undefined && (
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    Histórico de reciclaje: {citizenData.puntos_reciclaje} pts
+                  </Text>
+                )}
               </View>
 
               <View style={styles.antifraudDivider} />
 
-              <Text style={styles.antifraudFieldLabel}>ESTADO DE SUSCRIPCIÓN</Text>
+              <Text style={styles.antifraudFieldLabel}>ESTADO DEL VECINO</Text>
               <Text style={styles.antifraudSubscriptionText}>
-                {citizenData?.estado_suscripcion || 'Activo'}
+                {citizenData?.notFound ? 'No Encontrado' : 'Vecino Registrado'}
               </Text>
             </View>
 
@@ -1401,7 +1455,7 @@ export default function AffiliateHomeScreen({ navigation }) {
               <View>
                 <Text style={styles.discountModalTitle}>Aplicar Descuento en Caja</Text>
                 <Text style={styles.discountModalSub}>
-                  Cliente: {citizenData?.nombre_completo?.split(' ')[0] || 'Vecino'} (Saldo: {citizenData?.puntos_reciclaje || 0} pts)
+                  Cliente: {citizenData?.nombre_completo?.split(' ')[0] || 'Vecino'} (Saldo: {citizenData?.puntos_acumulados ?? 0} pts)
                 </Text>
               </View>
               <TouchableOpacity
@@ -2278,32 +2332,45 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   scannerWrapper: {
-    height: 280,
-    borderRadius: 18,
+    height: 350,
+    width: '100%',
+    borderRadius: 16,
     overflow: 'hidden',
+    position: 'relative',
     backgroundColor: '#0F172A',
     marginBottom: 16,
-    position: 'relative',
     borderWidth: 2,
     borderColor: '#0D9488',
   },
   cameraBox: {
-    flex: 1,
+    height: 350,
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
     position: 'relative',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: '#0D9488',
   },
   scannerCrosshair: {
-    width: 200,
-    height: 200,
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 220,
+    height: 220,
+    marginTop: -110,
+    marginLeft: -110,
     borderWidth: 2,
     borderColor: '#2DD4BF',
     borderRadius: 16,
     backgroundColor: 'rgba(45, 212, 191, 0.08)',
+    zIndex: 10,
   },
   scannedOverlay: {
     position: 'absolute',
-    bottom: 16,
+    bottom: 20,
+    alignSelf: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -2311,6 +2378,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    zIndex: 10,
   },
   scannedOverlayText: {
     color: '#FFFFFF',
@@ -2345,6 +2413,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 20,
     backgroundColor: '#1E293B',
+  },
+  permissionLoadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   permissionIcon: {
     fontSize: 40,

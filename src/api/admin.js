@@ -272,14 +272,14 @@ export const rejectRedemption = async (canjeId) => {
         .single();
 
       if (profile) {
-        const saldoActual = profile.puntos_reciclaje ?? profile.puntos_acumulados ?? 0;
+        const saldoActual = profile.puntos_acumulados ?? 0;
         const nuevoSaldo = saldoActual + puntosAReembolsar;
 
         await supabase
           .from('perfiles')
           .update({
-            puntos_reciclaje: nuevoSaldo,
-            ...(profile.puntos_acumulados !== undefined ? { puntos_acumulados: nuevoSaldo } : {}),
+            puntos_acumulados: nuevoSaldo,
+            updated_at: new Date().toISOString(),
           })
           .eq('id', canje.cliente_id);
       }
@@ -483,4 +483,8 @@ export const auditCommercialOffer = async ({
     throw err;
   }
 };
+
+// Re-exportar funciones operativas de cuadrillas para el módulo administrativo
+export { createCuadrilla, getCuadrillas, deleteCuadrilla } from './logistics';
+
 

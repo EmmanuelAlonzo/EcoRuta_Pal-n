@@ -1,14 +1,27 @@
 import 'react-native-url-polyfill/auto';
+import { Platform } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
 
 /**
- * Adaptador de almacenamiento persistente usando Expo SecureStore.
- * Garantiza que tokens JWT y sesiones de Supabase se guarden
- * de forma cifrada en el llavero/almacén seguro del dispositivo móvil.
+ * Adaptador de almacenamiento persistente híbrido (Web y Móvil).
+ * En Web utiliza localStorage del navegador para evitar el colapso de SecureStore.
+ * En Móvil (iOS y Android) utiliza Expo SecureStore cifrado.
  */
-const ExpoSecureStoreAdapter = {
+const StorageAdapter = {
   getItem: async (key) => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          return window.localStorage.getItem(key);
+        }
+        return null;
+      } catch (error) {
+        console.error(`[LocalStorage] Error leyendo key "${key}":`, error);
+        return null;
+      }
+    }
+
     try {
       return await SecureStore.getItemAsync(key);
     } catch (error) {
@@ -17,6 +30,17 @@ const ExpoSecureStoreAdapter = {
     }
   },
   setItem: async (key, value) => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(key, value);
+        }
+      } catch (error) {
+        console.error(`[LocalStorage] Error guardando key "${key}":`, error);
+      }
+      return;
+    }
+
     try {
       await SecureStore.setItemAsync(key, value);
     } catch (error) {
@@ -24,6 +48,17 @@ const ExpoSecureStoreAdapter = {
     }
   },
   removeItem: async (key) => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.removeItem(key);
+        }
+      } catch (error) {
+        console.error(`[LocalStorage] Error eliminando key "${key}":`, error);
+      }
+      return;
+    }
+
     try {
       await SecureStore.deleteItemAsync(key);
     } catch (error) {
@@ -38,7 +73,7 @@ const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: ExpoSecureStoreAdapter,
+    storage: StorageAdapter,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,

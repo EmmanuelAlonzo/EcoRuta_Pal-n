@@ -206,8 +206,10 @@ export default function SupervisorAssignScreen({ navigation }) {
     try {
       const newCuad = await createCuadrilla({
         nombre: cuadrillaNombre.trim(),
-        descripcion: cuadrillaDesc.trim(),
+        descripcion: cuadrillaDesc.trim() || null,
+        camion_id: cuadrillaCamion || null,
         codigo_camion: cuadrillaCamion || null,
+        estado: 'activo',
         memberIds: selectedMemberIds,
       });
 
@@ -223,7 +225,7 @@ export default function SupervisorAssignScreen({ navigation }) {
         `La cuadrilla "${cuadrillaNombre.trim()}" fue registrada con ${selectedMemberIds.length} operarios asignados.`
       );
     } catch (err) {
-      console.error('[SupervisorAssign] Error creando cuadrilla:', err);
+      console.log('Error creando cuadrilla:', err);
       Alert.alert('Error al crear cuadrilla', err.message || 'No se pudo registrar la cuadrilla.');
     } finally {
       setIsSavingCuadrilla(false);

@@ -6,87 +6,8 @@ import { supabase } from '../services/supabase';
  * historial de pagos en `pagos_suscripcion` y catálogo de `comercios` afiliados.
  */
 
-// Catálogo por defecto de comercios aliados en Palín (fallback resiliente)
-export const PALIN_AFFILIATED_MERCHANTS = [
-  {
-    id: 'merch-01',
-    nombre: 'Supermercado La Bendición',
-    categoria: 'Abarrotes y Alimentos',
-    icono: '🛒',
-    descuento: '15% de descuento en canasta básica',
-    tipo_promocion: 'Porcentaje (%)',
-    puntos_requeridos: 80,
-    direccion: '4ta Calle 2-15, Zona 1, Palín, Escuintla',
-    horario: 'Lunes a Domingo: 7:00 AM - 8:00 PM',
-    telefono: '+502 7838-1200',
-    activo: true,
-  },
-  {
-    id: 'merch-02',
-    nombre: 'Ferretería & Materiales El Quetzal',
-    categoria: 'Hogar y Construcción',
-    icono: '🔨',
-    descuento: 'Q25.00 de descuento en compras mayores a Q100',
-    tipo_promocion: 'Descuento (Q)',
-    puntos_requeridos: 100,
-    direccion: 'Avenida Principal 5-30, Zona 2, Palín',
-    horario: 'Lunes a Sábado: 8:00 AM - 6:00 PM',
-    telefono: '+502 7838-2345',
-    activo: true,
-  },
-  {
-    id: 'merch-03',
-    nombre: 'Café & Panadería Volcán Palín',
-    categoria: 'Cafetería y Repostería',
-    icono: '☕',
-    descuento: '1 Café tradicional + 2 panes artesanales (Promoción 2x1)',
-    tipo_promocion: 'Promoción 2x1',
-    puntos_requeridos: 50,
-    direccion: 'Frente al Parque Central de Palín',
-    horario: 'Lunes a Domingo: 6:30 AM - 7:30 PM',
-    telefono: '+502 5522-8901',
-    activo: true,
-  },
-  {
-    id: 'merch-04',
-    nombre: 'Farmacia y Droguería San Martín',
-    categoria: 'Salud y Cuidado Personal',
-    icono: '💊',
-    descuento: '10% de descuento en medicamentos genéricos',
-    tipo_promocion: 'Porcentaje (%)',
-    puntos_requeridos: 60,
-    direccion: 'Barrio San Pedro, Zona 3, Palín',
-    horario: '24 Horas los 365 días',
-    telefono: '+502 7838-4455',
-    activo: true,
-  },
-  {
-    id: 'merch-05',
-    nombre: 'Taller & Repuestos Ecológicos Palín',
-    categoria: 'Automotriz y Motos',
-    icono: '🔧',
-    descuento: 'Revisión preventiva gratis + 10% en mano de obra',
-    tipo_promocion: 'Porcentaje (%)',
-    puntos_requeridos: 120,
-    direccion: 'Km 39 Carretera al Pacífico, Entrada a Palín',
-    horario: 'Lunes a Sábado: 7:30 AM - 5:30 PM',
-    telefono: '+502 4433-2211',
-    activo: true,
-  },
-  {
-    id: 'merch-06',
-    nombre: 'Librería y Útiles Escolares Palín',
-    categoria: 'Papelería y Educación',
-    icono: '📚',
-    descuento: 'Q15.00 de descuento en cuadernos y reciclaje',
-    tipo_promocion: 'Descuento (Q)',
-    puntos_requeridos: 40,
-    direccion: '3ra Avenida 1-10, Zona 1, Palín',
-    horario: 'Lunes a Viernes: 8:00 AM - 6:00 PM',
-    telefono: '+502 5811-9034',
-    activo: true,
-  },
-];
+// Catálogo por defecto eliminado: todas las ofertas y comercios se nutren 100% desde Supabase
+export const PALIN_AFFILIATED_MERCHANTS = [];
 
 /**
  * Consulta la lista de incentivos/ofertas de comercios aliados en Supabase
@@ -136,11 +57,11 @@ export const getAffiliatedMerchants = async () => {
 
     if (error) {
       console.warn('[financial.js] Tabla comercios en Supabase:', error.message);
-      return PALIN_AFFILIATED_MERCHANTS;
+      return [];
     }
 
     if (!data || data.length === 0) {
-      return PALIN_AFFILIATED_MERCHANTS;
+      return [];
     }
 
     return data.map((item) => ({
@@ -148,8 +69,8 @@ export const getAffiliatedMerchants = async () => {
       tipo_promocion: item.tipo_promocion || 'Descuento (Q)',
     }));
   } catch (err) {
-    console.warn('[financial.js] Fallback a comercios locales de Palín:', err.message);
-    return PALIN_AFFILIATED_MERCHANTS;
+    console.warn('[financial.js] Error consultando comercios aliados en Supabase:', err.message);
+    return [];
   }
 };
 
@@ -332,18 +253,17 @@ export const recordPosSubscriptionPayment = async ({
       paymentData = data;
     }
 
-    // 2. Actualizar inmediatamente el estado de suscripción del ciudadano en `perfiles`
+    // 2. Actualizar inmediatamente el estado del ciudadano en `perfiles`
     try {
       await supabase
         .from('perfiles')
         .update({
-          estado_suscripcion: 'activa',
           activo: true,
           updated_at: new Date().toISOString(),
         })
         .eq('id', clientId);
     } catch (profileErr) {
-      console.warn('[financial.js] Advertencia actualizando perfiles.estado_suscripcion:', profileErr);
+      console.warn('[financial.js] Advertencia actualizando perfiles.activo:', profileErr);
     }
 
     return {

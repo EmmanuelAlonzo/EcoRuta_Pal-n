@@ -478,62 +478,130 @@ export const getCuadrillas = async () => {
  * @param {Array<string>} [param0.memberIds] - IDs de operarios a vincular en `perfiles`
  * @returns {Promise<object>} Cuadrilla creada
  */
-export const createCuadrilla = async ({
-  nombre,
-  descripcion = '',
-  ruta_id = null,
-  codigo_camion = null,
-  memberIds = [],
-}) => {
+export const createCuadrilla = async (params = {}) => {
+  const {
+    nombre,
+    descripcion = null,
+    ruta_id = null,
+    codigo_camion = null,
+    camion_id = null,
+    supervisor_id = null,
+    estado = 'activo',
+    activo = true,
+    memberIds = [],
+  } = params;
+
   if (!nombre || !nombre.trim()) {
     throw new Error('El nombre de la cuadrilla es requerido.');
   }
 
   const cleanNombre = nombre.trim();
-  const cleanDesc = (descripcion || '').trim();
+  const cleanDesc = descripcion ? descripcion.trim() : null;
+  const resolvedCamion = camion_id !== undefined && camion_id !== null && camion_id !== ''
+    ? camion_id
+    : (codigo_camion !== undefined && codigo_camion !== null && codigo_camion !== '' ? codigo_camion : null);
+  const resolvedSupervisor = supervisor_id !== undefined && supervisor_id !== null && supervisor_id !== ''
+    ? supervisor_id
+    : null;
+  const resolvedEstado = estado !== undefined && estado !== null && estado !== ''
+    ? estado
+    : (activo ? 'activo' : 'inactivo');
+  const resolvedRuta = ruta_id !== undefined && ruta_id !== null && ruta_id !== ''
+    ? ruta_id
+    : null;
 
+  // Sanitización estricta: ningún campo debe ser undefined (evita fallos de inserción en Supabase)
   const payload = {
     nombre: cleanNombre,
+    camion_id: resolvedCamion,
+    supervisor_id: resolvedSupervisor,
+    estado: resolvedEstado,
     descripcion: cleanDesc,
-    ruta_id: ruta_id || null,
-    codigo_camion: codigo_camion || null,
-    activo: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    ruta_id: resolvedRuta,
   };
 
-  const { data: createdCuadrilla, error } = await supabase
-    .from('cuadrillas')
-    .insert([payload])
-    .select()
-    .single();
+  try {
+    let createdCuadrilla = null;
 
-  if (error) {
-    console.error('[logistics.js] Error al insertar en tabla cuadrillas:', error.message);
+    // Intento 1: Inserción con columnas estándar (nombre, camion_id, supervisor_id, estado, ruta_id, descripcion)
+    const { data: cuadData, error } = await supabase
+      .from('cuadrillas')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      console.log('Error creando cuadrilla:', error);
+
+      // Si falla porque el esquema de BD usa `codigo_camion` o `activo` en vez de `camion_id`/`estado`
+      if (error.message && error.message.includes('does not exist')) {
+        const altPayload = {
+          nombre: cleanNombre,
+          descripcion: cleanDesc,
+          codigo_camion: resolvedCamion,
+          ruta_id: resolvedRuta,
+          activo: true,
+        };
+        console.log('[logistics.js] Intentando esquema alternativo de cuadrillas...');
+        const { data: altData, error: altErr } = await supabase
+          .from('cuadrillas')
+          .insert([altPayload])
+          .select()
+          .single();
+
+        if (altErr) {
+          console.log('Error creando cuadrilla:', altErr);
+          // Último recurso: insertar únicamente con campos obligatorios que garantizan éxito
+          const minimalPayload = {
+            nombre: cleanNombre,
+            descripcion: cleanDesc,
+          };
+          const { data: minData, error: minErr } = await supabase
+            .from('cuadrillas')
+            .insert([minimalPayload])
+            .select()
+            .single();
+
+          if (minErr) {
+            console.log('Error creando cuadrilla:', minErr);
+            throw minErr;
+          }
+          createdCuadrilla = minData;
+        } else {
+          createdCuadrilla = altData;
+        }
+      } else {
+        throw error;
+      }
+    } else {
+      createdCuadrilla = cuadData;
+    }
+
+    // Actualizar `cuadrilla_id` en la tabla `perfiles` para cada operario seleccionado
+    if (Array.isArray(memberIds) && memberIds.length > 0 && createdCuadrilla?.id) {
+      try {
+        await Promise.all(
+          memberIds.map((userId) =>
+            supabase
+              .from('perfiles')
+              .update({
+                cuadrilla_id: createdCuadrilla.id,
+                ...(resolvedCamion ? { codigo_camion: resolvedCamion } : {}),
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', userId)
+          )
+        );
+      } catch (profileErr) {
+        console.warn('[logistics.js] Advertencia vinculando perfiles a la nueva cuadrilla:', profileErr.message);
+      }
+    }
+
+    return createdCuadrilla;
+  } catch (error) {
+    console.log('Error creando cuadrilla:', error);
     throw error;
   }
-
-  // Actualizar `cuadrilla_id` en la tabla `perfiles` para cada operario seleccionado
-  if (Array.isArray(memberIds) && memberIds.length > 0 && createdCuadrilla?.id) {
-    try {
-      await Promise.all(
-        memberIds.map((userId) =>
-          supabase
-            .from('perfiles')
-            .update({
-              cuadrilla_id: createdCuadrilla.id,
-              ...(codigo_camion ? { codigo_camion } : {}),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', userId)
-        )
-      );
-    } catch (profileErr) {
-      console.warn('[logistics.js] Advertencia vinculando perfiles a la nueva cuadrilla:', profileErr.message);
-    }
-  }
-
-  return createdCuadrilla;
 };
 
 /**
@@ -773,9 +841,9 @@ export const getRouteClients = async (rutaNombre = '') => {
   try {
     const { data: clients, error } = await supabase
       .from('perfiles')
-      .select('id, nombre_completo, direccion, telefono, email, activo')
+      .select('id, nombre_completo, direccion, telefono, email, activo, latitud, longitud')
       .eq('rol', 'cliente')
-      .limit(20);
+      .limit(30);
 
     if (error) {
       console.warn('[logistics.js] Error al consultar clientes para mapa de ruta:', error.message);
@@ -791,13 +859,17 @@ export const getRouteClients = async (rutaNombre = '') => {
       }
     }
 
-    // Mapear viviendas con microdispersión geográfica para visualización clara en mapa
+    // Mapear viviendas priorizando coordenadas reales de perfiles
     return (clients || []).map((c, index) => {
-      // Offset radial determinista para cada vivienda en el cuadrante de Palín
+      const realLat = parseFloat(c.latitud);
+      const realLng = parseFloat(c.longitud);
+      const hasRealCoords = !isNaN(realLat) && !isNaN(realLng) && realLat !== 0 && realLng !== 0;
+
+      // Si aún no tiene GPS fijado, dispersar determinísticamente en el cuadrante de Palín
       const angle = (index * 45) * (Math.PI / 180);
       const radius = 0.0012 + (index * 0.0004);
-      const lat = baseCoords.lat + (Math.sin(angle) * radius);
-      const lng = baseCoords.lng + (Math.cos(angle) * radius);
+      const lat = hasRealCoords ? realLat : baseCoords.lat + (Math.sin(angle) * radius);
+      const lng = hasRealCoords ? realLng : baseCoords.lng + (Math.cos(angle) * radius);
 
       return {
         id: c.id,

@@ -88,6 +88,120 @@ export const getAvailableIncentives = async () => {
 };
 
 /**
+ * Consulta los comercios afiliados y agrupa sus ofertas aprobadas y con stock
+ * desde la tabla `catalogo_incentivos`.
+ * 
+ * @returns {Promise<Array>} Lista de comercios afiliados con sus ofertas
+ */
+export const getMerchantsWithOffers = async () => {
+  try {
+    // 1. Consultar ofertas activas y con existencias
+    const { data: offersData, error: offersErr } = await supabase
+      .from('catalogo_incentivos')
+      .select('*')
+      .eq('activo', true)
+      .gt('stock', 0);
+
+    if (offersErr) {
+      console.warn('[client.js] Advertencia consultando ofertas en catalogo_incentivos:', offersErr.message);
+    }
+
+    const approvedOffers = (offersData || []).filter(
+      (o) => !o.estado_aprobacion || o.estado_aprobacion === 'aprobado'
+    );
+
+    // 2. Consultar comercios aliados
+    const { data: merchantsData, error: merchErr } = await supabase
+      .from('comercios')
+      .select('*')
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+
+    if (merchErr) {
+      console.warn('[client.js] Advertencia consultando tabla comercios:', merchErr.message);
+    }
+
+    const merchantsMap = new Map();
+
+    // Registrar comercios formales de la tabla comercios
+    (merchantsData || []).forEach((m) => {
+      merchantsMap.set(String(m.id || m.nombre).toLowerCase(), {
+        id: m.id,
+        nombre: m.nombre,
+        categoria: m.categoria || 'Comercio Local',
+        direccion: m.direccion || 'Palín, Escuintla',
+        horario: m.horario || 'Lunes a Sábado',
+        telefono: m.telefono || '',
+        icono: m.icono || (
+          (m.categoria || '').toLowerCase().includes('café') ? '☕' :
+          (m.categoria || '').toLowerCase().includes('farmacia') || (m.categoria || '').toLowerCase().includes('salud') ? '💊' :
+          (m.categoria || '').toLowerCase().includes('abarrotes') ? '🛒' :
+          (m.categoria || '').toLowerCase().includes('ferretería') ? '🔨' : '🏪'
+        ),
+        ofertas: [],
+      });
+    });
+
+    // Asignar ofertas a sus comercios correspondientes
+    approvedOffers.forEach((o) => {
+      const comercioName = (o.comercio || 'Comercio Aliado').trim();
+      let target = null;
+
+      if (o.comercio_id && merchantsMap.has(String(o.comercio_id).toLowerCase())) {
+        target = merchantsMap.get(String(o.comercio_id).toLowerCase());
+      } else {
+        // Buscar por nombre de comercio
+        for (const [, m] of merchantsMap) {
+          if (m.nombre.toLowerCase() === comercioName.toLowerCase()) {
+            target = m;
+            break;
+          }
+        }
+      }
+
+      // Si la oferta no tiene registro en tabla comercios, crear comercio dinámico
+      if (!target) {
+        const dynamicKey = comercioName.toLowerCase();
+        if (!merchantsMap.has(dynamicKey)) {
+          merchantsMap.set(dynamicKey, {
+            id: `comercio-${o.id}`,
+            nombre: comercioName,
+            categoria: o.categoria || 'Comercio Local',
+            direccion: o.direccion || 'Palín, Escuintla',
+            horario: o.horario || 'Horario Comercial',
+            telefono: o.telefono || '',
+            icono: (o.categoria || '').toLowerCase().includes('café') ? '☕' :
+              (o.categoria || '').toLowerCase().includes('farmacia') || (o.categoria || '').toLowerCase().includes('salud') ? '💊' :
+              (o.categoria || '').toLowerCase().includes('abarrotes') ? '🛒' :
+              (o.categoria || '').toLowerCase().includes('ferretería') ? '🔨' : '🏪',
+            ofertas: [],
+          });
+        }
+        target = merchantsMap.get(dynamicKey);
+      }
+
+      target.ofertas.push({
+        id: o.id,
+        nombre: o.nombre,
+        descripcion: o.descripcion,
+        puntos_requeridos: o.puntos_requeridos ?? o.costo_puntos ?? 50,
+        costo_puntos: o.puntos_requeridos ?? o.costo_puntos ?? 50,
+        stock: o.stock ?? o.limite_canjes ?? 10,
+        limite_canjes: o.limite_canjes ?? o.stock,
+        tipo_promocion: o.tipo_promocion || 'Descuento (Q)',
+        fecha_fin: o.fecha_fin || null,
+        comercio: target.nombre,
+      });
+    });
+
+    return Array.from(merchantsMap.values());
+  } catch (err) {
+    console.error('[client.js] Error en getMerchantsWithOffers:', err);
+    return [];
+  }
+};
+
+/**
  * Consulta el historial de canjes realizados por el cliente.
  * @param {string} userId - UUID del cliente en Supabase
  * @returns {Promise<Array>} Lista de canjes
@@ -142,7 +256,7 @@ export const redeemIncentive = async (userId, incentiveId, costPuntos) => {
       throw new Error('No se pudo verificar el saldo actual de tu perfil en Supabase.');
     }
 
-    const currentPoints = profile.puntos_reciclaje ?? profile.puntos_acumulados ?? 0;
+    const currentPoints = profile.puntos_acumulados ?? 0;
     if (currentPoints < costPuntos) {
       throw new Error(
         `Saldo insuficiente. Tienes ${currentPoints} puntos y se requieren ${costPuntos} puntos.`
@@ -185,11 +299,11 @@ export const redeemIncentive = async (userId, incentiveId, costPuntos) => {
       throw new Error(`Fallo al registrar el canje: ${canjeErr.message}`);
     }
 
-    // PASO B: Actualizar `perfiles` deduciendo los puntos
+    // PASO B: Actualizar `perfiles` deduciendo los puntos estrictamente en `puntos_acumulados`
     const nuevoSaldo = Math.max(0, currentPoints - costPuntos);
     const profileUpdatePayload = {
-      puntos_reciclaje: nuevoSaldo,
-      ...(profile.puntos_acumulados !== undefined ? { puntos_acumulados: nuevoSaldo } : {}),
+      puntos_acumulados: nuevoSaldo,
+      updated_at: new Date().toISOString(),
     };
 
     const { error: updateProfileErr } = await supabase
@@ -320,7 +434,7 @@ export const getGeoreferencedClients = async () => {
   try {
     let { data, error } = await supabase
       .from('perfiles')
-      .select('id, nombre_completo, email, telefono, direccion, latitud, longitud, activo, puntos_reciclaje')
+      .select('id, nombre_completo, email, telefono, direccion, latitud, longitud, activo, puntos_acumulados, puntos_reciclaje')
       .eq('rol', 'cliente')
       .order('nombre_completo', { ascending: true });
 
@@ -364,7 +478,9 @@ export const getGeoreferencedClients = async () => {
         latitude: lat,
         longitude: lng,
         hasExactCoords,
-        puntos: c.puntos_reciclaje ?? 0,
+        puntos: c.puntos_acumulados ?? 0,
+        puntos_acumulados: c.puntos_acumulados ?? 0,
+        puntos_reciclaje: c.puntos_reciclaje ?? 0,
         activo: c.activo !== false,
         tipo: 'vivienda',
         title: `🏠 ${c.nombre_completo || 'Vivienda Vecino'}`,
@@ -382,6 +498,5 @@ export {
   createSubscriptionPayment,
   getSubscriptionPayments,
   getAffiliatedMerchants,
-  PALIN_AFFILIATED_MERCHANTS,
 } from './financial';
 
