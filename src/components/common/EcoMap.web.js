@@ -9,6 +9,7 @@ export default function EcoMapWeb({
   markers = [],
   polygonCoordinates = [],
   onMapPress,
+  onMarkerPress,
   height = 300,
   zoomLevel = 15,
   style,
@@ -63,11 +64,16 @@ export default function EcoMapWeb({
       if (event.data?.type === 'ECO_MAP_READY') {
         isIframeReadyRef.current = true;
         sendLayersUpdate();
-      } else if (event.data?.type === 'ECO_MAP_CLICK' && typeof onMapPress === 'function') {
+      } else if (
+        (event.data?.type === 'ECO_MAP_CLICK' || event.data?.type === 'ECO_MARKER_DRAGEND') &&
+        typeof onMapPress === 'function'
+      ) {
         onMapPress({
           latitude: event.data.latitude,
           longitude: event.data.longitude,
         });
+      } else if (event.data?.type === 'ECO_MARKER_CLICK' && typeof onMarkerPress === 'function') {
+        onMarkerPress(event.data.marker);
       }
     };
 
@@ -75,7 +81,7 @@ export default function EcoMapWeb({
       window.addEventListener('message', handleMessage);
       return () => window.removeEventListener('message', handleMessage);
     }
-  }, [onMapPress, sendLayersUpdate]);
+  }, [onMapPress, onMarkerPress, sendLayersUpdate]);
 
   // Disparar actualización incremental cada vez que cambien los datos
   useEffect(() => {
@@ -285,10 +291,10 @@ export default function EcoMapWeb({
               const mLng = m.longitude || m.longitud;
 
               if (mLat && mLng) {
-                const isHouse = m.tipo === 'vivienda';
-                const isTruck = m.tipo === 'camion';
+                const isHouse = m.tipo === 'vivienda' || m.tipo === 'cliente';
+                const isTruck = m.tipo === 'camion' || m.tipo === 'flota';
                 const iconClass = isTruck ? 'truck-icon' : isHouse ? 'house-icon' : 'collection-icon';
-                const emoji = isTruck ? '🚛' : isHouse ? '🏠' : (m.tipo_material && m.tipo_material.includes('separad') ? '♻️' : '📦');
+                const emoji = isTruck ? '🚛' : isHouse ? '📍' : (m.tipo_material && m.tipo_material.includes('separad') ? '♻️' : '📦');
 
                 const markerIcon = L.divIcon({
                   className: 'custom-div-icon ' + iconClass,
@@ -298,15 +304,40 @@ export default function EcoMapWeb({
                   popupAnchor: [0, -16]
                 });
 
-                let popupHtml = '<div class="popup-title">' + (m.nombre_completo || m.title || 'Punto de Recolección') + '</div>';
+                let popupHtml = '<div class="popup-title">' + (isTruck ? '🚛 ' : isHouse ? '📍 ' : '') + (m.nombre_completo || m.title || 'Punto') + '</div>';
                 popupHtml += '<div class="popup-desc">📍 ' + (m.direccion || m.description || 'Palín, Escuintla') + '</div>';
+                if (m.ultima_actualizacion) {
+                  popupHtml += '<div class="popup-desc" style="color:#2563EB;font-weight:700;margin-top:4px;">⏱️ Actualizado: ' + m.ultima_actualizacion + '</div>';
+                }
                 if (m.peso_kg) {
                   popupHtml += '<div class="popup-desc" style="color:#059669;font-weight:700;margin-top:4px;">⚖️ Peso: ' + m.peso_kg + ' kg (' + (m.tipo_material || m.material_tipo || 'reciclaje') + ')</div>';
                 }
 
-                L.marker([mLat, mLng], { icon: markerIcon })
+                const lm = L.marker([mLat, mLng], { 
+                  icon: markerIcon,
+                  draggable: Boolean(m.draggable)
+                })
                   .addTo(markersGroup)
                   .bindPopup(popupHtml);
+
+                lm.on('click', function() {
+                  window.parent.postMessage({
+                    type: 'ECO_MARKER_CLICK',
+                    marker: m
+                  }, '*');
+                });
+
+                if (m.draggable) {
+                  lm.on('dragend', function(e) {
+                    const pos = e.target.getLatLng();
+                    window.parent.postMessage({
+                      type: 'ECO_MARKER_DRAGEND',
+                      id: m.id,
+                      latitude: pos.lat,
+                      longitude: pos.lng
+                    }, '*');
+                  });
+                }
               }
             });
           }

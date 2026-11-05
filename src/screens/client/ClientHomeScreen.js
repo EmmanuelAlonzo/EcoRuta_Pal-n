@@ -175,8 +175,11 @@ export default function ClientHomeScreen({ navigation }) {
   }, [navigation, loadData]);
 
   const userIdReal = user?.id || '';
-  const qrUrl = userIdReal
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(userIdReal)}&margin=10`
+  const codigoVecino =
+    profile?.codigo_vecino ||
+    (userIdReal ? `P-${userIdReal.replace(/-/g, '').substring(0, 6).toUpperCase()}` : 'P-A1B2C3');
+  const qrUrl = codigoVecino
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(codigoVecino)}&margin=10`
     : null;
 
   return (
@@ -214,12 +217,17 @@ export default function ClientHomeScreen({ navigation }) {
             <Text style={styles.welcomeGreeting}>
               ¡Hola, {profile?.nombre_completo || 'Vecino de Palín'}! 👋
             </Text>
-            <View style={styles.locationRow}>
+            <TouchableOpacity
+              style={styles.locationRow}
+              onPress={() => navigation?.navigate?.('ClientProfile')}
+              activeOpacity={0.7}
+            >
               <Text style={styles.locationIcon}>📍</Text>
               <Text style={styles.locationText}>
-                {profile?.direccion || 'Palín, Escuintla'} • Sector Activo
+                {profile?.direccion || 'Palín, Escuintla'} •{' '}
+                {profile?.latitud ? '🟢 Ubicación GPS fijada' : 'Fijar vivienda en mapa →'}
               </Text>
-            </View>
+            </TouchableOpacity>
           </View>
 
           {/* ── 2. DASHBOARD DE IMPACTO AMBIENTAL ────────────────────────── */}
@@ -361,24 +369,33 @@ export default function ClientHomeScreen({ navigation }) {
                 )}
               </View>
 
-              {/* Mensaje destacado para el operario del camión */}
+              {/* Código de vecino en texto grande para lectura manual fácil */}
+              <View style={styles.neighborCodeBox}>
+                <Text style={styles.neighborCodeBoxLabel}>CÓDIGO DE VECINO OFICIAL</Text>
+                <Text style={styles.neighborCodeBoxText}>{codigoVecino}</Text>
+                <Text style={styles.neighborCodeBoxSub}>
+                  Lectura manual rápida o escaneo con lector láser POS
+                </Text>
+              </View>
+
+              {/* Mensaje destacado para el operario del camión o comercio */}
               <View style={styles.highlightNoticeBox}>
                 <View style={styles.highlightNoticeHeader}>
                   <Text style={styles.highlightNoticeIcon}>📢</Text>
                   <Text style={styles.highlightNoticeTitle}>
-                    Muestra este código al operario del camión
+                    Muestra este código al operario del camión o comercio
                   </Text>
                 </View>
                 <Text style={styles.highlightNoticeDesc}>
-                  El personal de campo escaneará tu credencial para registrar tus bolsas de reciclaje y acreditar tus puntos automáticamente.
+                  El personal de campo o comercio escaneará tu QR o ingresará tu código de vecino para registrar reciclaje o canjear descuentos.
                 </Text>
               </View>
 
-              {/* Pie de la Credencial con UUID */}
+              {/* Pie de la Credencial con código de vecino */}
               <View style={styles.ticketFooter}>
-                <Text style={styles.ticketFooterLabel}>ID CIUDADANO (SUPABASE):</Text>
+                <Text style={styles.ticketFooterLabel}>CÓDIGO VECINO:</Text>
                 <Text style={styles.ticketFooterCode} numberOfLines={1} ellipsizeMode="middle">
-                  {userIdReal || 'No autenticado'}
+                  {codigoVecino}
                 </Text>
               </View>
             </View>
@@ -920,6 +937,37 @@ const styles = StyleSheet.create({
   qrImage: {
     width: 210,
     height: 210,
+  },
+  neighborCodeBox: {
+    width: '100%',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  neighborCodeBoxLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803D',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  neighborCodeBoxText: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 3,
+    marginVertical: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  neighborCodeBoxSub: {
+    fontSize: 11,
+    color: '#166534',
+    textAlign: 'center',
   },
   highlightNoticeBox: {
     width: '100%',

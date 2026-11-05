@@ -208,6 +208,14 @@ export const useAuthStore = create((set, get) => ({
   },
 
   /**
+   * Actualizar el perfil local reactivo en el store de Zustand
+   */
+  updateProfileState: (updatedProfile) =>
+    set((state) => ({
+      profile: state.profile ? { ...state.profile, ...updatedProfile } : updatedProfile,
+    })),
+
+  /**
    * Limpiar mensaje de error en la UI
    */
   clearError: () => set({ error: null }),

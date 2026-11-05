@@ -70,15 +70,20 @@ export default function EcoMap({
           </Marker>
         )}
 
-        {/* Marcadores de Viviendas o Puntos de Recolección */}
+        {/* Marcadores de Viviendas, Clientes, Cuadrillas o Puntos de Recolección */}
         {markers.map((m, idx) => {
-          const isHouse = m.tipo === 'vivienda';
+          const isClient = m.tipo === 'cliente' || m.tipo === 'vivienda';
+          const isFleet = m.tipo === 'flota' || m.tipo === 'camion';
           return (
             <Marker
               key={m.id?.toString() || `marker_${idx}`}
               coordinate={{
                 latitude: m.latitude,
                 longitude: m.longitude,
+              }}
+              draggable={Boolean(m.draggable)}
+              onDragEnd={(e) => {
+                if (m.onDragEnd) m.onDragEnd(e.nativeEvent.coordinate);
               }}
               title={m.nombre_completo || m.title || `Punto #${idx + 1}`}
               description={m.direccion || m.description || 'Punto registrado'}
@@ -87,17 +92,27 @@ export default function EcoMap({
               <View
                 style={[
                   styles.markerBadge,
-                  isHouse ? styles.houseMarkerBadge : styles.collectionMarkerBadge,
+                  isFleet
+                    ? styles.truckMarkerBadgeSmall
+                    : isClient
+                    ? styles.clientMarkerBadge
+                    : styles.collectionMarkerBadge,
                 ]}
               >
                 <Text style={styles.markerBadgeIcon}>
-                  {isHouse ? '🏠' : (m.tipo_material?.includes('separad') ? '♻️' : '📦')}
+                  {isFleet ? '🚛' : isClient ? '📍' : (m.tipo_material?.includes('separad') ? '♻️' : '📦')}
                 </Text>
               </View>
               <Callout>
                 <View style={styles.calloutBox}>
-                  <Text style={styles.calloutTitle}>{m.nombre_completo || m.title || 'Punto de Recolección'}</Text>
+                  <Text style={styles.calloutTitle}>
+                    {isFleet ? '🚛 ' : isClient ? '📍 ' : ''}
+                    {m.nombre_completo || m.title || 'Punto'}
+                  </Text>
                   <Text style={styles.calloutDesc}>{m.direccion || m.description || 'Palín, Escuintla'}</Text>
+                  {m.ultima_actualizacion ? (
+                    <Text style={styles.calloutDetailFleet}>⏱️ Actualizado: {m.ultima_actualizacion}</Text>
+                  ) : null}
                   {m.peso_kg ? (
                     <Text style={styles.calloutDetail}>⚖️ Peso: {m.peso_kg} kg</Text>
                   ) : null}
@@ -212,6 +227,16 @@ const styles = StyleSheet.create({
   houseMarkerBadge: {
     backgroundColor: '#059669',
   },
+  clientMarkerBadge: {
+    backgroundColor: '#DC2626',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  truckMarkerBadgeSmall: {
+    backgroundColor: '#1E40AF',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
   collectionMarkerBadge: {
     backgroundColor: '#D97706',
   },
@@ -235,6 +260,12 @@ const styles = StyleSheet.create({
   calloutDetail: {
     fontSize: 11,
     color: '#059669',
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  calloutDetailFleet: {
+    fontSize: 11,
+    color: '#2563EB',
     fontWeight: '700',
     marginTop: 3,
   },

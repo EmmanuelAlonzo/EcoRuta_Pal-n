@@ -314,6 +314,15 @@ export default function ClientWalletScreen({ navigation }) {
 
   const statusBadge = getStatusBadge();
 
+  // Código de vecino y QR oficial para canje en comercios
+  const codigoVecino =
+    userProfile?.codigo_vecino ||
+    profile?.codigo_vecino ||
+    (user?.id ? `P-${user.id.replace(/-/g, '').substring(0, 6).toUpperCase()}` : 'P-A1B2C3');
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+    codigoVecino
+  )}&margin=10`;
+
   // Helper para psicología de recompensas e indicador visual de promoción
   const getPromoTypeBadge = (tipo, fallbackText = '') => {
     const raw = `${tipo || ''} ${fallbackText || ''}`.toLowerCase();
@@ -471,7 +480,41 @@ export default function ClientWalletScreen({ navigation }) {
                 </View>
               </View>
 
-              {/* ── 2. TARJETA DE ESTADO DE SUSCRIPCIÓN ECORUTA ───────────── */}
+              {/* ── 2. TARJETA ECO-PASE: CÓDIGO QR DE CANJE (CÓDIGO DE VECINO) ── */}
+              <View style={styles.qrPassCard}>
+                <View style={styles.qrPassHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.qrPassBadge}>
+                      <Text style={styles.qrPassBadgeText}>🎫 ECO-PASE CIUDADANO</Text>
+                    </View>
+                    <Text style={styles.qrPassTitle}>Código de Canje en Comercios</Text>
+                  </View>
+                  <Text style={styles.qrPassHeaderIcon}>🏪</Text>
+                </View>
+
+                <Text style={styles.qrPassDesc}>
+                  Presenta este código QR o dicta tu código de vecino en las tiendas aliadas para canjear tus puntos por descuentos.
+                </Text>
+
+                <View style={styles.qrPassImageFrame}>
+                  <Image
+                    source={{ uri: qrUrl }}
+                    style={styles.qrPassImage}
+                    resizeMode="contain"
+                  />
+                </View>
+
+                {/* Código de vecino en texto grande para lectura manual fácil */}
+                <View style={styles.neighborCodeCard}>
+                  <Text style={styles.neighborCodeHeader}>CÓDIGO DE VECINO</Text>
+                  <Text style={styles.neighborCodeBig}>{codigoVecino}</Text>
+                  <Text style={styles.neighborCodeHelp}>
+                    Léelo en caja o permítele al cajero escanearlo con pistola láser POS
+                  </Text>
+                </View>
+              </View>
+
+              {/* ── 3. TARJETA DE ESTADO DE SUSCRIPCIÓN ECORUTA ───────────── */}
               <View style={styles.sectionCard}>
                 <View style={styles.sectionCardHeader}>
                   <Text style={styles.sectionTitle}>📋 Estado de Suscripción</Text>
@@ -1233,6 +1276,106 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 12,
+  },
+  // Eco-Pase QR
+  qrPassCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 3,
+    alignItems: 'center',
+  },
+  qrPassHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 8,
+  },
+  qrPassBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  qrPassBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#03543F',
+    letterSpacing: 0.5,
+  },
+  qrPassTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  qrPassHeaderIcon: {
+    fontSize: 26,
+    marginLeft: 8,
+  },
+  qrPassDesc: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 14,
+    paddingHorizontal: 6,
+  },
+  qrPassImageFrame: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    marginBottom: 14,
+  },
+  qrPassImage: {
+    width: 200,
+    height: 200,
+  },
+  neighborCodeCard: {
+    width: '100%',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  neighborCodeHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803D',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  neighborCodeBig: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 3,
+    marginVertical: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  neighborCodeHelp: {
+    fontSize: 11,
+    color: '#166534',
+    textAlign: 'center',
+    lineHeight: 15,
   },
   // Secciones
   sectionCard: {

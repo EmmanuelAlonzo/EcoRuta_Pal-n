@@ -20,9 +20,10 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore } from '../../store/useAuthStore';
 import { THEME } from '../../constants/theme';
-import { getCitizenVerification, reportFraudLog } from '../../api/collections';
+import { reportFraudLog } from '../../api/collections';
 import {
-  processAffiliateDiscount,
+  validateRedemption,
+  processRedemption,
   getAffiliateSettlementData,
   recordAffiliateCommissionPayment,
   getAffiliateOffers,
@@ -37,6 +38,9 @@ export default function AffiliateHomeScreen({ navigation }) {
   const user = useAuthStore((state) => state.user);
   const profile = useAuthStore((state) => state.profile);
   const logout = useAuthStore((state) => state.logout);
+
+  // Referencia para autoenfoque de pistola de código de barras en Web
+  const webInputRef = useRef(null);
 
   // Pestaña activa
   const [activeTab, setActiveTab] = useState('caja'); // 'caja' | 'ofertas' | 'liquidacion' | 'historial'
@@ -296,8 +300,11 @@ export default function AffiliateHomeScreen({ navigation }) {
   const [offerDesc, setOfferDesc] = useState('');
   const [offerPoints, setOfferPoints] = useState('50');
   const [offerStock, setOfferStock] = useState('25');
+  const [offerStockLimit, setOfferStockLimit] = useState(''); // Límite de Canjes (Stock)
+  const [offerExpiryDate, setOfferExpiryDate] = useState(''); // Fecha de Vencimiento
   const [offerCategory, setOfferCategory] = useState('Abarrotes');
   const [offerPromoType, setOfferPromoType] = useState('Descuento (Q)');
+  const [selectedOfferId, setSelectedOfferId] = useState(null); // Oferta elegida en canje
   const [isSubmittingOffer, setIsSubmittingOffer] = useState(false);
   const [isRespondingCounter, setIsRespondingCounter] = useState(false);
 
@@ -340,6 +347,14 @@ export default function AffiliateHomeScreen({ navigation }) {
       return;
     }
 
+    const limitNum = offerStockLimit.trim() ? parseInt(offerStockLimit, 10) : null;
+    if (offerStockLimit.trim() && (isNaN(limitNum) || limitNum < 0)) {
+      Alert.alert('Límite Inválido', 'Ingresa un límite de canjes numérico válido mayor o igual a 0.');
+      return;
+    }
+
+    const expiryVal = offerExpiryDate.trim() || null;
+
     setIsSubmittingOffer(true);
     try {
       await proposeAffiliateOffer({
@@ -348,7 +363,12 @@ export default function AffiliateHomeScreen({ navigation }) {
         nombre: offerName,
         descripcion: offerDesc,
         costoPuntos: pointsNum,
-        stock: stockNum,
+        stock: limitNum !== null ? limitNum : stockNum,
+        limiteCanjes: limitNum,
+        limite_canjes: limitNum,
+        fechaVencimiento: expiryVal,
+        fechaFin: expiryVal,
+        fecha_fin: expiryVal,
         categoria: offerCategory,
         tipoPromocion: offerPromoType,
       });
@@ -360,6 +380,8 @@ export default function AffiliateHomeScreen({ navigation }) {
       setOfferDesc('');
       setOfferPoints('50');
       setOfferStock('25');
+      setOfferStockLimit('');
+      setOfferExpiryDate('');
       setOfferPromoType('Descuento (Q)');
 
       Alert.alert(
@@ -486,28 +508,47 @@ export default function AffiliateHomeScreen({ navigation }) {
     return unsubscribe;
   }, [navigation, loadSettlement, loadOffers]);
 
-  // ─── ESCANEO Y VALIDACIÓN ANTIFRAUDE ──────────────────────────────────────
+  // ─── REINICIAR ESCÁNER Y ENFOCAR PISTOLA EN WEB ──────────────────────────
+  const resetScanner = useCallback(() => {
+    setScanned(false);
+    setManualCode('');
+    if (Platform.OS === 'web') {
+      setTimeout(() => {
+        webInputRef.current?.focus?.();
+      }, 120);
+    }
+  }, []);
+
+  // ─── ESCANEO Y VALIDACIÓN ANTIFRAUDE (POR CÓDIGO DE VECINO) ───────────────
   const handleBarcodeScanned = useCallback(
     async ({ data }) => {
       if (scanned || isValidatingCitizen || verificationModalVisible || discountModalVisible) {
         return;
       }
 
-      const rawId = (data || '').trim();
-      if (!rawId) return;
+      const rawCode = (data || '').trim();
+      if (!rawCode) return;
 
-      Vibration.vibrate(80);
+      if (Platform.OS !== 'web') {
+        try {
+          Vibration.vibrate(80);
+        } catch (e) {
+          // ignore
+        }
+      }
       setScanned(true);
-      setScannedCitizenId(rawId);
+      setScannedCitizenId(rawCode);
       setIsValidatingCitizen(true);
 
       try {
-        const res = await getCitizenVerification(rawId);
+        // Valida al usuario en Supabase utilizando el nuevo `codigo_vecino`
+        const res = await validateRedemption(rawCode);
         if (res.found && res.profile) {
           setCitizenData(res.profile);
         } else {
           setCitizenData({
-            id: rawId,
+            id: rawCode,
+            codigo_vecino: rawCode,
             nombre_completo: 'Código No Registrado en el Padrón',
             direccion: 'Sin dirección oficial en base de datos',
             activo: false,
@@ -518,9 +559,10 @@ export default function AffiliateHomeScreen({ navigation }) {
         }
         setVerificationModalVisible(true);
       } catch (err) {
-        console.error('[AffiliateHome] Error verificando QR:', err);
+        console.error('[AffiliateHome] Error verificando código de vecino:', err);
         setCitizenData({
-          id: rawId,
+          id: rawCode,
+          codigo_vecino: rawCode,
           nombre_completo: 'Fallo al Consultar Datos del Titular',
           direccion: 'Sin conexión a Supabase',
           activo: false,
@@ -538,7 +580,7 @@ export default function AffiliateHomeScreen({ navigation }) {
   // Escaneo manual / código escrito
   const handleManualScan = () => {
     if (!manualCode.trim()) {
-      Alert.alert('Código Requerido', 'Ingresa el UUID o código QR del cliente.');
+      Alert.alert('Código Requerido', 'Ingresa el código de vecino (ej. P-A1B2C3) o QR del cliente.');
       return;
     }
     handleBarcodeScanned({ data: manualCode.trim() });
@@ -548,7 +590,7 @@ export default function AffiliateHomeScreen({ navigation }) {
   const handleRejectCitizen = async () => {
     Alert.alert(
       '⚠️ Rechazar Cliente y Registrar Alerta',
-      `¿Deseas reportar este código QR (${scannedCitizenId}) como irregular o sospechoso? Se guardará un registro de auditoría en Supabase.`,
+      `¿Deseas reportar este código (${scannedCitizenId}) como irregular o sospechoso? Se guardará un registro de auditoría en Supabase.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -570,8 +612,7 @@ export default function AffiliateHomeScreen({ navigation }) {
 
               setVerificationModalVisible(false);
               setCitizenData(null);
-              setScanned(false);
-              setManualCode('');
+              resetScanner();
 
               Alert.alert('Alerta Registrada', 'El código fue rechazado y reportado a Gestión EcoRuta.');
             } catch (err) {
@@ -589,6 +630,7 @@ export default function AffiliateHomeScreen({ navigation }) {
     // Abrir formulario de compra y descuento
     setPurchaseAmount('');
     setPointsToRedeem('50'); // Sugerencia inicial: 50 pts = Q5.00
+    setSelectedOfferId(null);
     setTicketNo(`TKT-${Date.now().toString().slice(-4)}`);
     setDiscountModalVisible(true);
   };
@@ -640,10 +682,12 @@ export default function AffiliateHomeScreen({ navigation }) {
           onPress: async () => {
             setIsProcessingDiscount(true);
             try {
-              const res = await processAffiliateDiscount({
+              const res = await processRedemption({
                 affiliateId: user?.id,
                 affiliateName: profile?.nombre_completo || 'Comercio Afiliado de Palín',
                 clientId: citizenData?.id,
+                codigoVecino: citizenData?.codigo_vecino || scannedCitizenId,
+                offerId: selectedOfferId,
                 purchaseAmount: purchase,
                 pointsToRedeem: points,
                 discountAmount: discountInQ,
@@ -652,15 +696,16 @@ export default function AffiliateHomeScreen({ navigation }) {
 
               // Recargar estado de cuenta
               await loadSettlement(true);
+              await loadOffers();
 
               setDiscountModalVisible(false);
               setCitizenData(null);
-              setScanned(false);
-              setManualCode('');
+              setSelectedOfferId(null);
+              resetScanner();
 
               Alert.alert(
                 '🎉 ¡Transacción Exitosa!',
-                `Se aplicó el descuento de Q${discountInQ.toFixed(2)} al cliente.\n\nNuevo saldo del cliente: ${res.nuevoSaldo} pts.\n\nSe registró la comisión de Q1.50 por cliente referido (CPA) a pagar a EcoRuta.`
+                `Se aplicó el descuento de Q${discountInQ.toFixed(2)} al cliente (${citizenData?.codigo_vecino || citizenData?.nombre_completo || 'Vecino'}).\n\nNuevo saldo del cliente: ${res.nuevoSaldo} pts.\n\nSe registró la comisión de Q1.50 por cliente referido (CPA) a pagar a EcoRuta.`
               );
             } catch (err) {
               console.error('[AffiliateHome] Error procesando descuento:', err);
@@ -935,80 +980,152 @@ export default function AffiliateHomeScreen({ navigation }) {
         )}
 
         {activeTab === 'caja' && (
-          /* ── PESTAÑA 1: CAJA Y ESCÁNER QR CON ANTIFRAUDE ────────────────── */
+          /* ── PESTAÑA 1: CAJA Y ESCÁNER HÍBRIDO (WEB / MÓVIL) ────────────── */
           <View>
-            {/* Banner Informativo */}
-            <View style={styles.scanBanner}>
-              <Text style={styles.scanBannerTitle}>📷 Escanea el Código del Vecino</Text>
-              <Text style={styles.scanBannerSub}>
-                Apunta al código QR del cliente para verificar su identidad y saldo antes de aplicar el descuento.
-              </Text>
-            </View>
+            {Platform.OS === 'web' ? (
+              /* ── MODO WEB: TERMINAL POS CON PISTOLA LÁSER / TECLADO ─────── */
+              <View style={styles.webTerminalCard}>
+                <View style={styles.webTerminalHeader}>
+                  <View style={styles.webTerminalBadge}>
+                    <Text style={styles.webTerminalBadgeIcon}>🔫</Text>
+                    <Text style={styles.webTerminalBadgeText}>TERMINAL POS WEB • LECTOR LÁSER</Text>
+                  </View>
+                  <View style={styles.statusLivePill}>
+                    <View style={styles.statusLiveDot} />
+                    <Text style={styles.statusLiveText}>Lector Activo</Text>
+                  </View>
+                </View>
 
-            {/* Cámara Nativa / Visor QR */}
-            <View style={styles.scannerWrapper}>
-              {Platform.OS === 'web' ? (
-                <View style={styles.webCameraFallback}>
-                  <Text style={styles.cameraIcon}>📷</Text>
-                  <Text style={styles.cameraTitle}>Visor de Cámara Web</Text>
-                  <Text style={styles.cameraSub}>
-                    En navegadores web puedes ingresar el código del QR manualmente abajo.
+                <Text style={styles.webTerminalTitle}>Escaneo Rápido de Canjes en Caja</Text>
+                <Text style={styles.webTerminalDesc}>
+                  Apunta la pistola lectora láser Bluetooth o USB al código QR del vecino, o escribe su código corto. El lector enviará 'Enter' automáticamente para validar el saldo.
+                </Text>
+
+                <View style={styles.webInputContainer}>
+                  <Text style={styles.webInputLabel}>CÓDIGO DE VECINO (P-XXXXXX) O QR</Text>
+                  <View style={styles.webInputRow}>
+                    <TextInput
+                      ref={webInputRef}
+                      style={styles.webTerminalInput}
+                      autoFocus={true}
+                      placeholder="Escanea o teclea el código corto"
+                      placeholderTextColor="#94A3B8"
+                      value={manualCode}
+                      onChangeText={setManualCode}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      returnKeyType="search"
+                      onSubmitEditing={(e) => {
+                        const code = e.nativeEvent?.text || manualCode;
+                        if (code && code.trim()) {
+                          handleBarcodeScanned({ data: code.trim() });
+                        }
+                      }}
+                      editable={!isValidatingCitizen}
+                    />
+                    <TouchableOpacity
+                      style={[styles.webSearchBtn, isValidatingCitizen && styles.webSearchBtnDisabled]}
+                      onPress={handleManualScan}
+                      disabled={isValidatingCitizen}
+                      activeOpacity={0.85}
+                    >
+                      {isValidatingCitizen ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.webSearchBtnText}>Validar ↵</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {isValidatingCitizen && (
+                  <View style={styles.webValidatingNotice}>
+                    <ActivityIndicator size="small" color="#0D9488" />
+                    <Text style={styles.webValidatingText}>
+                      Validando código de vecino en Supabase...
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.webTerminalFooter}>
+                  <Text style={styles.webTerminalHint}>
+                    ⚡ Compatible con lectores Honeywell, Zebra, Netum y pistolas láser Bluetooth/USB HID.
                   </Text>
                 </View>
-              ) : permission?.granted ? (
-                <View style={styles.cameraBox}>
-                  <CameraView
-                    style={StyleSheet.absoluteFillObject}
-                    facing="back"
-                    barcodeScannerSettings={{
-                      barcodeTypes: ['qr'],
-                    }}
-                    onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
-                  />
-                  <View style={styles.scannerCrosshair} />
-                  {scanned && (
-                    <View style={styles.scannedOverlay}>
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                      <Text style={styles.scannedOverlayText}>QR detectado. Validando...</Text>
+              </View>
+            ) : (
+              /* ── MODO MÓVIL (ANDROID / IOS): CÁMARA NATIVA ─────────────── */
+              <View>
+                {/* Banner Informativo Móvil */}
+                <View style={styles.scanBanner}>
+                  <Text style={styles.scanBannerTitle}>📷 Escanea el Código del Vecino</Text>
+                  <Text style={styles.scanBannerSub}>
+                    Apunta con la cámara al código QR del cliente para verificar su identidad y saldo antes de aplicar el descuento.
+                  </Text>
+                </View>
+
+                {/* Cámara Nativa / Visor QR */}
+                <View style={styles.scannerWrapper}>
+                  {permission?.granted ? (
+                    <View style={styles.cameraBox}>
+                      <CameraView
+                        style={StyleSheet.absoluteFillObject}
+                        facing="back"
+                        barcodeScannerSettings={{
+                          barcodeTypes: ['qr'],
+                        }}
+                        onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
+                      />
+                      <View style={styles.scannerCrosshair} />
+                      {scanned && (
+                        <View style={styles.scannedOverlay}>
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                          <Text style={styles.scannedOverlayText}>QR detectado. Validando...</Text>
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.permissionBox}>
+                      <Text style={styles.permissionIcon}>🔒</Text>
+                      <Text style={styles.permissionTitle}>Permiso de Cámara Requerido</Text>
+                      <Text style={styles.permissionSub}>
+                        Para escanear el QR del cliente desde tu dispositivo móvil, concede acceso a la cámara.
+                      </Text>
+                      <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
+                        <Text style={styles.permissionBtnText}>Conceder Permiso</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>
-              ) : (
-                <View style={styles.permissionBox}>
-                  <Text style={styles.permissionIcon}>🔒</Text>
-                  <Text style={styles.permissionTitle}>Permiso de Cámara Requerido</Text>
-                  <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-                    <Text style={styles.permissionBtnText}>Conceder Permiso</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
 
-            {/* Entrada Manual o Lector de Código de Barras HID */}
-            <View style={styles.manualInputCard}>
-              <Text style={styles.manualInputLabel}>O ingresa el código del vecino manualmente:</Text>
-              <View style={styles.manualInputRow}>
-                <TextInput
-                  style={styles.manualInput}
-                  placeholder="Ej. UUID del ciudadano o código QR"
-                  value={manualCode}
-                  onChangeText={setManualCode}
-                  placeholderTextColor="#94A3B8"
-                  autoCapitalize="none"
-                />
-                <TouchableOpacity
-                  style={[styles.manualScanBtn, isValidatingCitizen && styles.manualScanBtnDisabled]}
-                  onPress={handleManualScan}
-                  disabled={isValidatingCitizen}
-                >
-                  {isValidatingCitizen ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.manualScanBtnText}>Verificar 🔍</Text>
-                  )}
-                </TouchableOpacity>
+                {/* Entrada Manual Móvil */}
+                <View style={styles.manualInputCard}>
+                  <Text style={styles.manualInputLabel}>O ingresa el código del vecino manualmente:</Text>
+                  <View style={styles.manualInputRow}>
+                    <TextInput
+                      style={styles.manualInput}
+                      placeholder="Ej. P-A1B2C3"
+                      value={manualCode}
+                      onChangeText={setManualCode}
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="characters"
+                      onSubmitEditing={handleManualScan}
+                    />
+                    <TouchableOpacity
+                      style={[styles.manualScanBtn, isValidatingCitizen && styles.manualScanBtnDisabled]}
+                      onPress={handleManualScan}
+                      disabled={isValidatingCitizen}
+                    >
+                      {isValidatingCitizen ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.manualScanBtnText}>Verificar 🔍</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
-            </View>
+            )}
 
             {/* Guía Rápida de Conversión */}
             <View style={styles.conversionInfoCard}>
@@ -1197,6 +1314,15 @@ export default function AffiliateHomeScreen({ navigation }) {
 
             {/* Datos Masivos en Letras Grandes */}
             <View style={styles.antifraudCard}>
+              <Text style={styles.antifraudFieldLabel}>CÓDIGO DE VECINO OFICIAL</Text>
+              <View style={styles.antifraudNeighborBadge}>
+                <Text style={styles.antifraudNeighborCode}>
+                  {citizenData?.codigo_vecino || scannedCitizenId}
+                </Text>
+              </View>
+
+              <View style={styles.antifraudDivider} />
+
               <Text style={styles.antifraudFieldLabel}>NOMBRE DEL TITULAR</Text>
               <Text style={styles.antifraudCitizenName}>
                 {citizenData?.nombre_completo || 'Titular Desconocido'}
@@ -1249,6 +1375,18 @@ export default function AffiliateHomeScreen({ navigation }) {
                 <Text style={styles.antifraudRejectBtnText}>Rechazar (Posible Fraude)</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={styles.antifraudCancelBtn}
+              onPress={() => {
+                setVerificationModalVisible(false);
+                setCitizenData(null);
+                resetScanner();
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.antifraudCancelBtnText}>← Volver a la Caja / Escanear Otro</Text>
+            </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -1267,7 +1405,10 @@ export default function AffiliateHomeScreen({ navigation }) {
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => setDiscountModalVisible(false)}
+                onPress={() => {
+                  setDiscountModalVisible(false);
+                  resetScanner();
+                }}
                 style={styles.modalCloseCircle}
               >
                 <Text style={styles.modalCloseText}>✕</Text>
@@ -1275,6 +1416,43 @@ export default function AffiliateHomeScreen({ navigation }) {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Selector de Ofertas Activas del Catálogo (Opcional) */}
+              {offers && offers.length > 0 && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={styles.inputLabel}>Seleccionar Oferta Activa (Opcional):</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                    <TouchableOpacity
+                      style={[styles.offerSelectChip, !selectedOfferId && styles.offerSelectChipActive]}
+                      onPress={() => setSelectedOfferId(null)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.offerSelectChipText, !selectedOfferId && styles.offerSelectChipTextActive]}>
+                        ✨ Canje Personalizado
+                      </Text>
+                    </TouchableOpacity>
+                    {offers.map((off) => {
+                      const isSel = selectedOfferId === off.id;
+                      const offPts = off.puntos_requeridos ?? off.costo_puntos ?? 50;
+                      return (
+                        <TouchableOpacity
+                          key={off.id?.toString()}
+                          style={[styles.offerSelectChip, isSel && styles.offerSelectChipActive]}
+                          onPress={() => {
+                            setSelectedOfferId(off.id);
+                            setPointsToRedeem(offPts.toString());
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.offerSelectChipText, isSel && styles.offerSelectChipTextActive]}>
+                            🎁 {off.nombre} ({offPts} pts)
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
               <Text style={styles.inputLabel}>Monto Total de la Compra (Q) *</Text>
               <TextInput
                 style={styles.textInput}
@@ -1685,33 +1863,44 @@ export default function AffiliateHomeScreen({ navigation }) {
                 placeholderTextColor="#94A3B8"
               />
 
+              <Text style={styles.inputLabel}>Puntos Requeridos *</Text>
+              <TextInput
+                style={styles.modalTextInput}
+                placeholder="50"
+                keyboardType="numeric"
+                value={offerPoints}
+                onChangeText={setOfferPoints}
+                placeholderTextColor="#94A3B8"
+              />
+              <Text style={styles.inputHelperText}>
+                ≈ Q{((parseInt(offerPoints || '0', 10) || 0) * 0.1).toFixed(2)} de valor
+              </Text>
+
+              {/* Campos opcionales: Límite de Canjes (Stock) y Fecha de Vencimiento */}
               <View style={{ flexDirection: 'row', gap: 12 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Puntos Requeridos *</Text>
+                  <Text style={styles.inputLabel}>Límite de Canjes (Stock)</Text>
                   <TextInput
                     style={styles.modalTextInput}
-                    placeholder="50"
+                    placeholder="Ej. 25 (opcional)"
                     keyboardType="numeric"
-                    value={offerPoints}
-                    onChangeText={setOfferPoints}
+                    value={offerStockLimit}
+                    onChangeText={setOfferStockLimit}
                     placeholderTextColor="#94A3B8"
                   />
-                  <Text style={styles.inputHelperText}>
-                    ≈ Q{((parseInt(offerPoints || '0', 10) || 0) * 0.1).toFixed(2)} de valor
-                  </Text>
+                  <Text style={styles.inputHelperText}>Stock de la oferta</Text>
                 </View>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Stock Disponible *</Text>
+                  <Text style={styles.inputLabel}>Fecha de Vencimiento</Text>
                   <TextInput
                     style={styles.modalTextInput}
-                    placeholder="25"
-                    keyboardType="numeric"
-                    value={offerStock}
-                    onChangeText={setOfferStock}
+                    placeholder="AAAA-MM-DD"
+                    value={offerExpiryDate}
+                    onChangeText={setOfferExpiryDate}
                     placeholderTextColor="#94A3B8"
                   />
-                  <Text style={styles.inputHelperText}>Límite de canjes</Text>
+                  <Text style={styles.inputHelperText}>Opcional (ej. 2026-12-31)</Text>
                 </View>
               </View>
 
@@ -1921,6 +2110,161 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#99F6E4',
+  },
+  // Terminal POS Web (Pistola Láser Bluetooth/USB)
+  webTerminalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#0D9488',
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 4,
+    marginBottom: 16,
+  },
+  webTerminalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  webTerminalBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#CCFBF1',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 6,
+  },
+  webTerminalBadgeIcon: {
+    fontSize: 14,
+  },
+  webTerminalBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F766E',
+    letterSpacing: 0.5,
+  },
+  statusLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 6,
+  },
+  statusLiveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#16A34A',
+  },
+  statusLiveText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  webTerminalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: THEME.colors.textPrimary,
+    marginBottom: 4,
+  },
+  webTerminalDesc: {
+    fontSize: 13,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  webInputContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  webInputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  webInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  webTerminalInput: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#0D9488',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+    letterSpacing: 1,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  webSearchBtn: {
+    backgroundColor: '#0D9488',
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0D9488',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  webSearchBtnDisabled: {
+    opacity: 0.6,
+  },
+  webSearchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  webValidatingNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  webValidatingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0D9488',
+  },
+  webTerminalFooter: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 10,
+    marginTop: 4,
+  },
+  webTerminalHint: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  permissionSub: {
+    fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 20,
   },
   scanBannerTitle: {
     fontSize: 15,
@@ -2384,6 +2728,60 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '900',
+  },
+  antifraudNeighborBadge: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  antifraudNeighborCode: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 2.5,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  antifraudCancelBtn: {
+    marginTop: 14,
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+  },
+  antifraudCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  // Chips de selección rápida de oferta
+  offerSelectChip: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  offerSelectChipActive: {
+    backgroundColor: '#0D9488',
+    borderColor: '#0D9488',
+  },
+  offerSelectChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  offerSelectChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   // Modal de Descuento en Caja
   discountModalOverlay: {

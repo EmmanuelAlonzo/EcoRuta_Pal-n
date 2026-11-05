@@ -29,6 +29,7 @@ import {
   getGeoreferencedCollections,
   PALIN_QUADRANTS,
 } from '../../api/logistics';
+import { getGeoreferencedClients } from '../../api/client';
 import EcoMap from '../../components/common/EcoMap';
 
 export default function SupervisorHomeScreen({ navigation }) {
@@ -39,6 +40,8 @@ export default function SupervisorHomeScreen({ navigation }) {
   const [trucks, setTrucks] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [geoCollections, setGeoCollections] = useState([]);
+  const [clientProfiles, setClientProfiles] = useState([]);
+  const [mapLayerFilter, setMapLayerFilter] = useState('viviendas'); // 'viviendas' | 'recolecciones' | 'todos'
   const [selectedGeoPoint, setSelectedGeoPoint] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -67,14 +70,16 @@ export default function SupervisorHomeScreen({ navigation }) {
     }
 
     try {
-      const [trucksData, routesData, collectionsData] = await Promise.all([
+      const [trucksData, routesData, collectionsData, clientsData] = await Promise.all([
         getTrucks(false),
         getRoutes(),
         getGeoreferencedCollections(),
+        getGeoreferencedClients(),
       ]);
       setTrucks(trucksData || []);
       setRoutes(routesData || []);
       setGeoCollections(collectionsData || []);
+      setClientProfiles(clientsData || []);
     } catch (err) {
       console.error('[SupervisorHome] Error cargando logística:', err);
       Alert.alert('Error', 'No se pudieron consultar los datos de logística en Supabase.');
@@ -510,20 +515,22 @@ export default function SupervisorHomeScreen({ navigation }) {
           {/* Panel de Estadísticas Territoriales */}
           <View style={styles.kpiContainer}>
             <View style={styles.kpiCard}>
-              <Text style={styles.kpiValue}>{geoCollections.length}</Text>
-              <Text style={styles.kpiLabel}>Puntos GPS</Text>
+              <Text style={[styles.kpiValue, { color: '#059669' }]}>{clientProfiles.length}</Text>
+              <Text style={styles.kpiLabel}>Viviendas Clientes</Text>
             </View>
             <View style={styles.kpiCard}>
-              <Text style={styles.kpiValue}>
-                {geoCollections
-                  .reduce((acc, c) => acc + (parseFloat(c.peso_kg) || 0), 0)
-                  .toFixed(1)}
+              <Text style={[styles.kpiValue, { color: '#16A34A' }]}>
+                {clientProfiles.filter((c) => c.hasExactCoords).length}
               </Text>
-              <Text style={styles.kpiLabel}>Kg Registrados</Text>
+              <Text style={styles.kpiLabel}>GPS Confirmado</Text>
+            </View>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiValue}>{geoCollections.length}</Text>
+              <Text style={styles.kpiLabel}>Puntos Recolección</Text>
             </View>
             <View style={styles.kpiCard}>
               <Text style={styles.kpiValue}>{trucks.length}</Text>
-              <Text style={styles.kpiLabel}>Camiones Activos</Text>
+              <Text style={styles.kpiLabel}>Camiones Flota</Text>
             </View>
           </View>
 
@@ -532,7 +539,7 @@ export default function SupervisorHomeScreen({ navigation }) {
             <View style={styles.mapCardHeader}>
               <View>
                 <Text style={styles.mapCardBadge}>SUPABASE GEOSPATIAL • PALÍN</Text>
-                <Text style={styles.mapCardTitle}>Dispersión de Recolecciones</Text>
+                <Text style={styles.mapCardTitle}>Monitoreo Territorial de Clientes</Text>
               </View>
               <View style={styles.liveBadge}>
                 <View style={styles.liveDot} />
@@ -540,96 +547,272 @@ export default function SupervisorHomeScreen({ navigation }) {
               </View>
             </View>
             <Text style={styles.mapCardSubtitle}>
-              Puntos georreferenciados capturados por las cámaras y GPS de los operarios en campo.
+              Consulta en tiempo real las viviendas de los ciudadanos (`perfiles`) y puntos de recolección en Palín.
             </Text>
 
-            <EcoMap
-              centerCoordinate={{
-                latitude: selectedGeoPoint?.latitud || 14.4042,
-                longitude: selectedGeoPoint?.longitud || -90.6978,
-              }}
-              markers={geoCollections.map((col, idx) => ({
-                id: col.id || `col-${idx}`,
-                latitude: col.latitud,
-                longitude: col.longitud,
-                title: `📦 ${col.material_tipo?.toUpperCase() || 'RECICLAJE'} (${col.peso_kg || 0} kg)`,
-                description: `${col.usuarios?.nombre_completo || 'Cliente'} • ${col.usuarios?.direccion || 'Palín'}`,
-                type: 'recoleccion',
-              }))}
-              height={320}
-              zoomLevel={14}
-              showUserLocation={false}
-            />
+            {/* Selector de Capas del Mapa */}
+            <View style={styles.mapLayerFilterRow}>
+              <TouchableOpacity
+                style={[
+                  styles.mapLayerBtn,
+                  mapLayerFilter === 'viviendas' && styles.mapLayerBtnActive,
+                ]}
+                onPress={() => setMapLayerFilter('viviendas')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.mapLayerBtnText,
+                    mapLayerFilter === 'viviendas' && styles.mapLayerBtnTextActive,
+                  ]}
+                >
+                  🏠 Viviendas Clientes ({clientProfiles.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.mapLayerBtn,
+                  mapLayerFilter === 'recolecciones' && styles.mapLayerBtnActive,
+                ]}
+                onPress={() => setMapLayerFilter('recolecciones')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.mapLayerBtnText,
+                    mapLayerFilter === 'recolecciones' && styles.mapLayerBtnTextActive,
+                  ]}
+                >
+                  📦 Recolecciones ({geoCollections.length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.mapLayerBtn,
+                  mapLayerFilter === 'todos' && styles.mapLayerBtnActive,
+                ]}
+                onPress={() => setMapLayerFilter('todos')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.mapLayerBtnText,
+                    mapLayerFilter === 'todos' && styles.mapLayerBtnTextActive,
+                  ]}
+                >
+                  🌐 Ver Todo
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* RENDERIZADO DEL MAPA CON MARCADORES DE PERFILES Y RECOLECCIONES */}
+            {(() => {
+              const displayedMarkers = [];
+
+              if (mapLayerFilter === 'viviendas' || mapLayerFilter === 'todos') {
+                clientProfiles.forEach((c) => {
+                  displayedMarkers.push({
+                    id: `house-${c.id}`,
+                    latitude: c.latitud,
+                    longitude: c.longitud,
+                    nombre_completo: c.nombre_completo,
+                    direccion: `${c.direccion} • Tel: ${c.telefono}`,
+                    title: `🏠 ${c.nombre_completo}`,
+                    description: `${c.direccion} • ${c.hasExactCoords ? '📍 GPS Confirmado' : '⏳ Estimado'}`,
+                    tipo: 'vivienda',
+                    type: 'vivienda',
+                    rawItem: c,
+                  });
+                });
+              }
+
+              if (mapLayerFilter === 'recolecciones' || mapLayerFilter === 'todos') {
+                geoCollections.forEach((col, idx) => {
+                  displayedMarkers.push({
+                    id: col.id || `col-${idx}`,
+                    latitude: col.latitud,
+                    longitude: col.longitud,
+                    nombre_completo: col.usuarios?.nombre_completo || 'Cliente',
+                    direccion: col.usuarios?.direccion || 'Palín',
+                    title: `📦 ${col.material_tipo?.toUpperCase() || 'RECICLAJE'} (${col.peso_kg || 0} kg)`,
+                    description: `${col.usuarios?.nombre_completo || 'Cliente'} • ${col.usuarios?.direccion || 'Palín'}`,
+                    tipo: 'recoleccion',
+                    type: 'recoleccion',
+                    peso_kg: col.peso_kg,
+                    tipo_material: col.material_tipo,
+                    rawItem: col,
+                  });
+                });
+              }
+
+              return (
+                <EcoMap
+                  centerCoordinate={{
+                    latitude: selectedGeoPoint?.latitud || selectedGeoPoint?.latitude || 14.4042,
+                    longitude: selectedGeoPoint?.longitud || selectedGeoPoint?.longitude || -90.6978,
+                  }}
+                  markers={displayedMarkers}
+                  height={340}
+                  zoomLevel={14}
+                  showUserLocation={false}
+                />
+              );
+            })()}
 
             {/* Leyenda del Mapa */}
             <View style={styles.mapLegendRow}>
               <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>🏠</Text>
+                <Text style={styles.legendText}>Vivienda Cliente (perfiles)</Text>
+              </View>
+              <View style={styles.legendItem}>
                 <Text style={styles.legendIcon}>📦</Text>
-                <Text style={styles.legendText}>Punto de Recolección</Text>
+                <Text style={styles.legendText}>Punto Recolección</Text>
               </View>
               <View style={styles.legendItem}>
                 <Text style={styles.legendIcon}>📍</Text>
-                <Text style={styles.legendText}>Cuadrante de Cobertura</Text>
+                <Text style={styles.legendText}>Sector Palín</Text>
               </View>
             </View>
           </View>
 
-          {/* Detalle del Punto Seleccionado o Lista Reciente */}
+          {/* Detalle de Puntos / Directorio Georreferenciado */}
           <View style={styles.collectionListSection}>
             <Text style={styles.collectionListTitle}>
-              Registro de Puntos Georreferenciados ({geoCollections.length})
+              {mapLayerFilter === 'viviendas'
+                ? `Directorio de Viviendas Clientes (${clientProfiles.length})`
+                : mapLayerFilter === 'recolecciones'
+                ? `Registro de Recolecciones (${geoCollections.length})`
+                : `Total de Puntos Georreferenciados (${clientProfiles.length + geoCollections.length})`}
             </Text>
             <Text style={styles.collectionListSub}>
-              Toca un punto para centrar el mapa o inspeccionar la coordenada capturada.
+              Toca un registro para centrar el mapa en las coordenadas guardadas en Supabase.
             </Text>
 
-            {geoCollections.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyIcon}>📍</Text>
-                <Text style={styles.emptyTitle}>Sin puntos GPS registrados</Text>
-                <Text style={styles.emptyDesc}>
-                  Las recolecciones escaneadas con coordenadas aparecerán automáticamente en este mapa.
-                </Text>
+            {/* LISTA DE VIVIENDAS DE CLIENTES */}
+            {(mapLayerFilter === 'viviendas' || mapLayerFilter === 'todos') && (
+              <View style={{ marginBottom: 14 }}>
+                <Text style={styles.subListHeader}>🏠 Viviendas de Clientes Registrados en `perfiles`</Text>
+                {clientProfiles.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyIcon}>🏠</Text>
+                    <Text style={styles.emptyTitle}>Sin clientes registrados</Text>
+                    <Text style={styles.emptyDesc}>
+                      Los clientes con rol 'cliente' en perfiles aparecerán en este listado.
+                    </Text>
+                  </View>
+                ) : (
+                  clientProfiles.map((c) => {
+                    const isSelected = selectedGeoPoint?.id === c.id;
+                    return (
+                      <TouchableOpacity
+                        key={`client-${c.id}`}
+                        style={[styles.geoItemCard, isSelected && styles.geoItemCardActive]}
+                        onPress={() =>
+                          setSelectedGeoPoint({
+                            id: c.id,
+                            latitud: c.latitud,
+                            longitud: c.longitud,
+                          })
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.geoItemTop}>
+                          <View style={styles.clientBadgePill}>
+                            <Text style={styles.clientBadgePillText}>🏠 VIVIENDA CIUDADANA</Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.geoClientStatusBadge,
+                              c.hasExactCoords ? styles.geoClientStatusGps : styles.geoClientStatusEstimate,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.geoClientStatusText,
+                                c.hasExactCoords ? styles.geoClientStatusTextGps : styles.geoClientStatusTextEstimate,
+                              ]}
+                            >
+                              {c.hasExactCoords ? '🟢 GPS Fijado' : '🟡 Ubicación Estimada'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <Text style={styles.geoClientName}>{c.nombre_completo}</Text>
+                        <Text style={styles.geoClientAddress}>📍 {c.direccion}</Text>
+
+                        <View style={styles.geoMetaRow}>
+                          <Text style={styles.geoCoordsText}>
+                            🌐 Lat: {c.latitud?.toFixed(4)}, Lng: {c.longitud?.toFixed(4)}
+                          </Text>
+                          <Text style={styles.geoPhoneText}>
+                            📞 {c.telefono}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
               </View>
-            ) : (
-              geoCollections.slice(0, 15).map((col, idx) => {
-                const isSelected = selectedGeoPoint?.id === col.id;
-                return (
-                  <TouchableOpacity
-                    key={col.id || idx}
-                    style={[styles.geoItemCard, isSelected && styles.geoItemCardActive]}
-                    onPress={() => setSelectedGeoPoint(col)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.geoItemTop}>
-                      <View style={styles.geoMaterialBadge}>
-                        <Text style={styles.geoMaterialText}>
-                          📦 {col.material_tipo?.toUpperCase() || 'MATERIAL'}
+            )}
+
+            {/* LISTA DE RECOLECCIONES EN CAMPO */}
+            {(mapLayerFilter === 'recolecciones' || mapLayerFilter === 'todos') && (
+              <View>
+                {mapLayerFilter === 'todos' && (
+                  <Text style={styles.subListHeader}>📦 Puntos de Recolección en Campo</Text>
+                )}
+                {geoCollections.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyIcon}>📍</Text>
+                    <Text style={styles.emptyTitle}>Sin puntos GPS registrados</Text>
+                    <Text style={styles.emptyDesc}>
+                      Las recolecciones escaneadas con coordenadas aparecerán automáticamente en este mapa.
+                    </Text>
+                  </View>
+                ) : (
+                  geoCollections.slice(0, 15).map((col, idx) => {
+                    const isSelected = selectedGeoPoint?.id === col.id;
+                    return (
+                      <TouchableOpacity
+                        key={col.id || idx}
+                        style={[styles.geoItemCard, isSelected && styles.geoItemCardActive]}
+                        onPress={() => setSelectedGeoPoint(col)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.geoItemTop}>
+                          <View style={styles.geoMaterialBadge}>
+                            <Text style={styles.geoMaterialText}>
+                              📦 {col.material_tipo?.toUpperCase() || 'MATERIAL'}
+                            </Text>
+                          </View>
+                          <Text style={styles.geoWeightText}>{col.peso_kg || 0} kg</Text>
+                        </View>
+
+                        <Text style={styles.geoClientName}>
+                          {col.usuarios?.nombre_completo || 'Vecino de Palín'}
                         </Text>
-                      </View>
-                      <Text style={styles.geoWeightText}>{col.peso_kg || 0} kg</Text>
-                    </View>
+                        <Text style={styles.geoClientAddress}>
+                          {col.usuarios?.direccion || 'Sector Palín, Escuintla'}
+                        </Text>
 
-                    <Text style={styles.geoClientName}>
-                      {col.usuarios?.nombre_completo || 'Vecino de Palín'}
-                    </Text>
-                    <Text style={styles.geoClientAddress}>
-                      {col.usuarios?.direccion || 'Sector Palín, Escuintla'}
-                    </Text>
-
-                    <View style={styles.geoMetaRow}>
-                      <Text style={styles.geoCoordsText}>
-                        🌐 Lat: {col.latitud?.toFixed(4)}, Lng: {col.longitud?.toFixed(4)}
-                      </Text>
-                      <Text style={styles.geoDateText}>
-                        {col.fecha_hora
-                          ? new Date(col.fecha_hora).toLocaleDateString()
-                          : 'Reciente'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })
+                        <View style={styles.geoMetaRow}>
+                          <Text style={styles.geoCoordsText}>
+                            🌐 Lat: {col.latitud?.toFixed(4)}, Lng: {col.longitud?.toFixed(4)}
+                          </Text>
+                          <Text style={styles.geoDateText}>
+                            {col.fecha_hora
+                              ? new Date(col.fecha_hora).toLocaleDateString()
+                              : 'Reciente'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
             )}
           </View>
         </ScrollView>
@@ -1383,6 +1566,77 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: THEME.colors.textSecondary,
     fontWeight: '600',
+  },
+  mapLayerFilterRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginVertical: 10,
+    flexWrap: 'wrap',
+  },
+  mapLayerBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mapLayerBtnActive: {
+    backgroundColor: '#EDE9FE',
+    borderColor: THEME.roles.supervisor,
+  },
+  mapLayerBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  mapLayerBtnTextActive: {
+    color: THEME.roles.supervisor,
+    fontWeight: '800',
+  },
+  subListHeader: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#334155',
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  clientBadgePill: {
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  clientBadgePillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  geoClientStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  geoClientStatusGps: {
+    backgroundColor: '#DCFCE7',
+  },
+  geoClientStatusEstimate: {
+    backgroundColor: '#FEF3C7',
+  },
+  geoClientStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  geoClientStatusTextGps: {
+    color: '#15803D',
+  },
+  geoClientStatusTextEstimate: {
+    color: '#B45309',
+  },
+  geoPhoneText: {
+    fontSize: 11,
+    color: '#0F766E',
+    fontWeight: '700',
   },
   // Estilos de Selección Geográfica para Rutas
   routeModalCard: {

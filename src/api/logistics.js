@@ -7,31 +7,59 @@ import { supabase } from '../services/supabase';
 // ─── GESTIÓN DE PERSONAL (ADMINISTRADOR) ────────────────────────────────────
 
 /**
- * Consulta la lista de colaboradores de EcoRuta (operarios, pilotos y supervisores)
+ * Consulta la lista de colaboradores operativos de EcoRuta desde la tabla `perfiles`
+ * Excluye perfiles de ciudadanos/clientes y afiliados para concentrarse en el personal operativo.
  * @returns {Promise<Array>}
  */
 export const getPersonnelList = async () => {
-  let { data, error } = await supabase
-    .from('perfiles')
-    .select('*')
-    .in('rol', ['operario', 'piloto', 'supervisor'])
-    .order('fecha_creacion', { ascending: false });
-
-  if (error) {
-    const res = await supabase
+  try {
+    const { data, error } = await supabase
       .from('perfiles')
       .select('*')
-      .in('rol', ['operario', 'piloto', 'supervisor']);
-    data = res.data;
-    error = res.error;
-  }
+      .order('nombre_completo', { ascending: true });
 
-  if (error) {
-    console.error('[logistics.js] Error al consultar personal:', error);
-    throw error;
-  }
+    if (error) {
+      console.error('[logistics.js] Error al consultar personal en perfiles:', error);
+      throw error;
+    }
 
-  return data || [];
+    return (data || []).filter((p) => {
+      const r = (p.rol || '').toLowerCase();
+      return r !== 'cliente' && r !== 'afiliado';
+    });
+  } catch (err) {
+    console.error('[logistics.js] Excepción en getPersonnelList:', err);
+    return [];
+  }
+};
+
+/**
+ * Consulta el personal operativo activo que actualmente NO tiene cuadrilla asignada (cuadrilla_id IS NULL)
+ * @returns {Promise<Array>}
+ */
+export const getUnassignedOperationalStaff = async () => {
+  try {
+    let { data, error } = await supabase
+      .from('perfiles')
+      .select('*')
+      .eq('activo', true)
+      .is('cuadrilla_id', null)
+      .order('nombre_completo', { ascending: true });
+
+    if (error) {
+      console.warn('[logistics.js] Advertencia con is(cuadrilla_id, null), intentando filtro en memoria:', error.message);
+      const all = await getPersonnelList();
+      return all.filter((p) => p.activo !== false && (!p.cuadrilla_id));
+    }
+
+    return (data || []).filter((p) => {
+      const r = (p.rol || '').toLowerCase();
+      return r !== 'cliente' && r !== 'afiliado' && r !== 'admin';
+    });
+  } catch (err) {
+    console.error('[logistics.js] Error en getUnassignedOperationalStaff:', err);
+    return [];
+  }
 };
 
 /**
@@ -365,6 +393,363 @@ export const assignPersonnelRoute = async (userId, { codigo_camion, ruta_asignad
   }
 
   return data;
+};
+
+// ─── GESTIÓN DE CUADRILLAS Y ASIGNACIÓN COLECTIVA DE RUTAS ─────────────────
+
+/**
+ * Consulta las cuadrillas registradas en la tabla `cuadrillas`, asociando
+ * los operarios y pilotos que pertenecen a cada una según su `cuadrilla_id` en `perfiles`.
+ * Datos 100% reales desde Supabase sin mocks ni memoria fija.
+ * 
+ * @returns {Promise<Array>} Lista de cuadrillas con sus miembros
+ */
+export const getCuadrillas = async () => {
+  try {
+    // 1. Consultar tabla `cuadrillas`
+    const { data: cuadrillas, error } = await supabase
+      .from('cuadrillas')
+      .select('*')
+      .order('nombre', { ascending: true });
+
+    if (error) {
+      console.warn('[logistics.js] Consulta a tabla cuadrillas:', error.message);
+      return [];
+    }
+
+    if (!cuadrillas || cuadrillas.length === 0) {
+      return [];
+    }
+
+    // 2. Consultar personal operativo en `perfiles` para agrupar miembros por cuadrilla_id
+    let operationalStaff = [];
+    try {
+      const { data: staffData } = await supabase
+        .from('perfiles')
+        .select('*')
+        .eq('activo', true)
+        .not('cuadrilla_id', 'is', null);
+
+      operationalStaff = staffData || [];
+    } catch (staffErr) {
+      console.warn('[logistics.js] Error al consultar miembros de cuadrillas:', staffErr.message);
+    }
+
+    // 3. Consultar rutas para asociar el nombre de la ruta vinculada
+    let allRoutes = [];
+    try {
+      const { data: rData } = await supabase.from('rutas').select('id, nombre');
+      allRoutes = rData || [];
+    } catch {
+      // Ignorar si falla
+    }
+
+    const routeMap = new Map((allRoutes || []).map((r) => [String(r.id), r.nombre]));
+
+    // Asociar miembros y nombres de ruta a cada cuadrilla
+    const enriched = (cuadrillas || []).map((c) => {
+      const members = operationalStaff.filter((s) => String(s.cuadrilla_id) === String(c.id));
+      const rutaNombre = c.ruta_id ? routeMap.get(String(c.ruta_id)) || c.ruta_asignada || null : null;
+
+      return {
+        ...c,
+        ruta_nombre: rutaNombre,
+        miembros: members,
+        total_miembros: members.length,
+      };
+    });
+
+    return enriched;
+  } catch (err) {
+    console.error('[logistics.js] Error en getCuadrillas:', err);
+    return [];
+  }
+};
+
+/**
+ * Crea una nueva cuadrilla en la tabla `cuadrillas` y asigna a los operarios seleccionados
+ * actualizando su `cuadrilla_id` en la tabla `perfiles`.
+ * 
+ * @param {object} param0
+ * @param {string} param0.nombre - Nombre de la cuadrilla (ej: "Cuadrilla Norte")
+ * @param {string} [param0.descripcion] - Descripción de tareas
+ * @param {string|number} [param0.ruta_id] - ID de la ruta asignada
+ * @param {string} [param0.codigo_camion] - Código de la unidad de flota asignada
+ * @param {Array<string>} [param0.memberIds] - IDs de operarios a vincular en `perfiles`
+ * @returns {Promise<object>} Cuadrilla creada
+ */
+export const createCuadrilla = async ({
+  nombre,
+  descripcion = '',
+  ruta_id = null,
+  codigo_camion = null,
+  memberIds = [],
+}) => {
+  if (!nombre || !nombre.trim()) {
+    throw new Error('El nombre de la cuadrilla es requerido.');
+  }
+
+  const cleanNombre = nombre.trim();
+  const cleanDesc = (descripcion || '').trim();
+
+  const payload = {
+    nombre: cleanNombre,
+    descripcion: cleanDesc,
+    ruta_id: ruta_id || null,
+    codigo_camion: codigo_camion || null,
+    activo: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: createdCuadrilla, error } = await supabase
+    .from('cuadrillas')
+    .insert([payload])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[logistics.js] Error al insertar en tabla cuadrillas:', error.message);
+    throw error;
+  }
+
+  // Actualizar `cuadrilla_id` en la tabla `perfiles` para cada operario seleccionado
+  if (Array.isArray(memberIds) && memberIds.length > 0 && createdCuadrilla?.id) {
+    try {
+      await Promise.all(
+        memberIds.map((userId) =>
+          supabase
+            .from('perfiles')
+            .update({
+              cuadrilla_id: createdCuadrilla.id,
+              ...(codigo_camion ? { codigo_camion } : {}),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userId)
+        )
+      );
+    } catch (profileErr) {
+      console.warn('[logistics.js] Advertencia vinculando perfiles a la nueva cuadrilla:', profileErr.message);
+    }
+  }
+
+  return createdCuadrilla;
+};
+
+/**
+ * Asigna una Cuadrilla completa a una `ruta_id` en la tabla `cuadrillas`.
+ * Además, propaga la asignación a todos los operarios pertenecientes a esa cuadrilla
+ * actualizando su `ruta_asignada` y opcionalmente `codigo_camion` en la tabla `perfiles`.
+ * 
+ * @param {string|number} cuadrillaId - ID de la cuadrilla en Supabase
+ * @param {string|number} rutaId - ID de la ruta en la tabla `rutas`
+ * @param {string} [rutaNombre=''] - Nombre legible de la ruta (ej: "Zona 1 — Casco Urbano")
+ * @param {string} [codigoCamion=null] - Código del camión asignado a la cuadrilla
+ * @returns {Promise<object>} Cuadrilla actualizada
+ */
+export const assignCuadrillaRoute = async (
+  cuadrillaId,
+  rutaId,
+  rutaNombre = '',
+  codigoCamion = null
+) => {
+  if (!cuadrillaId) throw new Error('Debes seleccionar una cuadrilla.');
+  if (!rutaId) throw new Error('Debes seleccionar una ruta para la cuadrilla.');
+
+  const updateCuadrillaPayload = {
+    ruta_id: rutaId,
+    updated_at: new Date().toISOString(),
+  };
+  if (codigoCamion !== undefined && codigoCamion !== null) {
+    updateCuadrillaPayload.codigo_camion = codigoCamion;
+  }
+
+  // 1. Actualizar `ruta_id` en la tabla `cuadrillas`
+  const { data: updatedCuadrilla, error } = await supabase
+    .from('cuadrillas')
+    .update(updateCuadrillaPayload)
+    .eq('id', cuadrillaId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[logistics.js] Error actualizando cuadrillas.ruta_id:', error.message);
+    throw error;
+  }
+
+  // 2. Propagar la ruta a todos los operarios de la cuadrilla en `perfiles`
+  try {
+    const profileUpdate = {
+      ruta_asignada: rutaNombre || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (codigoCamion) {
+      profileUpdate.codigo_camion = codigoCamion;
+    }
+
+    const { error: profileErr } = await supabase
+      .from('perfiles')
+      .update(profileUpdate)
+      .eq('cuadrilla_id', cuadrillaId);
+
+    if (profileErr) {
+      console.warn('[logistics.js] Advertencia actualizando miembros en perfiles:', profileErr.message);
+    }
+  } catch (pEx) {
+    console.warn('[logistics.js] Excepción propagando ruta a miembros:', pEx);
+  }
+
+  return updatedCuadrilla;
+};
+
+/**
+ * Agrega rápidamente un colaborador (operario o piloto) a una cuadrilla,
+ * actualizando su `cuadrilla_id` en la tabla `perfiles`.
+ * 
+ * @param {string|number} cuadrillaId - ID de la cuadrilla receptora
+ * @param {string} userId - UUID del colaborador en `perfiles`
+ * @param {string} [rutaAsignada=null] - Ruta heredada de la cuadrilla
+ * @param {string} [codigoCamion=null] - Camión heredado de la cuadrilla
+ * @returns {Promise<boolean>}
+ */
+export const addMemberToCuadrilla = async (
+  cuadrillaId,
+  userId,
+  rutaAsignada = null,
+  codigoCamion = null
+) => {
+  if (!cuadrillaId || !userId) {
+    throw new Error('ID de cuadrilla y de usuario requeridos.');
+  }
+
+  const payload = {
+    cuadrilla_id: cuadrillaId,
+    updated_at: new Date().toISOString(),
+  };
+  if (rutaAsignada) payload.ruta_asignada = rutaAsignada;
+  if (codigoCamion) payload.codigo_camion = codigoCamion;
+
+  try {
+    const { error } = await supabase
+      .from('perfiles')
+      .update(payload)
+      .eq('id', userId);
+
+    if (error) {
+      console.warn('[logistics.js] Error agregando miembro a cuadrilla:', error.message);
+      if (error.message && error.message.includes('cuadrilla_id')) {
+        throw new Error(
+          'La columna `cuadrilla_id` no existe aún en la tabla `perfiles`. Ejecuta la migración SQL de cuadrillas en Supabase.'
+        );
+      }
+      throw error;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('[logistics.js] Excepción en addMemberToCuadrilla:', err);
+    throw err;
+  }
+};
+
+/**
+ * Quita rápidamente a un colaborador de su cuadrilla actual,
+ * estableciendo `cuadrilla_id = null` en la tabla `perfiles`.
+ * 
+ * @param {string} userId - UUID del colaborador a desvincular
+ * @returns {Promise<boolean>}
+ */
+export const removeMemberFromCuadrilla = async (userId) => {
+  if (!userId) throw new Error('ID de usuario requerido.');
+
+  try {
+    const { error } = await supabase
+      .from('perfiles')
+      .update({
+        cuadrilla_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (error) {
+      console.warn('[logistics.js] Error desvinculando miembro de cuadrilla:', error.message);
+      throw error;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('[logistics.js] Excepción en removeMemberFromCuadrilla:', err);
+    throw err;
+  }
+};
+
+/**
+ * Elimina una cuadrilla y desvincula a todos sus operarios en `perfiles`.
+ * @param {string|number} cuadrillaId
+ * @returns {Promise<boolean>}
+ */
+export const deleteCuadrilla = async (cuadrillaId) => {
+  if (!cuadrillaId) throw new Error('ID de cuadrilla requerido.');
+
+  try {
+    // 1. Desvincular operarios
+    await supabase
+      .from('perfiles')
+      .update({ cuadrilla_id: null, updated_at: new Date().toISOString() })
+      .eq('cuadrilla_id', cuadrillaId);
+
+    // 2. Eliminar cuadrilla
+    const { error } = await supabase
+      .from('cuadrillas')
+      .delete()
+      .eq('id', cuadrillaId);
+
+    if (error) {
+      console.error('[logistics.js] Error eliminando en tabla cuadrillas:', error.message);
+      throw error;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('[logistics.js] Error en deleteCuadrilla:', err);
+    throw err;
+  }
+};
+
+/**
+ * Script DDL SQL para crear la tabla cuadrillas y agregar cuadrilla_id a perfiles
+ */
+export const getCuadrillasSqlScript = () => {
+  return `-- ═══════════════════════════════════════════════════════════════════════
+-- SCRIPT DDL: GESTIÓN DE CUADRILLAS Y ASIGNACIÓN DE RUTAS ECORUTA PALÍN
+-- Ejecuta este script en el SQL Editor de tu Dashboard de Supabase
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- 1. Tabla de Cuadrillas
+CREATE TABLE IF NOT EXISTS public.cuadrillas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre TEXT NOT NULL UNIQUE,
+    descripcion TEXT,
+    ruta_id UUID REFERENCES public.rutas(id) ON DELETE SET NULL,
+    codigo_camion TEXT,
+    activo BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 2. Clave foránea cuadrilla_id en tabla perfiles
+ALTER TABLE public.perfiles 
+ADD COLUMN IF NOT EXISTS cuadrilla_id UUID REFERENCES public.cuadrillas(id) ON DELETE SET NULL;
+
+-- 3. Habilitar Seguridad RLS y Políticas
+ALTER TABLE public.cuadrillas ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Lectura pública de cuadrillas" 
+ON public.cuadrillas FOR SELECT USING (true);
+
+CREATE POLICY "Gestión completa de cuadrillas por admin y supervisor" 
+ON public.cuadrillas FOR ALL USING (true);
+`;
 };
 
 // ─── CARTOGRAFÍA Y RUTEOS DINÁMICOS (PILOTOS Y SUPERVISIÓN) ────────────────

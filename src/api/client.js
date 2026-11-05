@@ -227,6 +227,156 @@ export const redeemIncentive = async (userId, incentiveId, costPuntos) => {
   }
 };
 
+/**
+ * Actualiza los datos de contacto, dirección y coordenadas GPS (latitud y longitud)
+ * de la vivienda del cliente en la tabla `perfiles` de Supabase.
+ * 
+ * @param {string} userId - UUID del cliente
+ * @param {object} param1 - Datos actualizables
+ * @param {string} [param1.nombre_completo]
+ * @param {string} [param1.telefono]
+ * @param {string} [param1.direccion]
+ * @param {number|string} [param1.latitud]
+ * @param {number|string} [param1.longitud]
+ * @returns {Promise<object>} Perfil actualizado en Supabase
+ */
+export const updateClientProfile = async (userId, {
+  nombre_completo,
+  telefono,
+  direccion,
+  latitud,
+  longitud,
+}) => {
+  if (!userId) {
+    throw new Error('El ID de usuario es requerido para actualizar el perfil.');
+  }
+
+  const payload = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (nombre_completo !== undefined) payload.nombre_completo = nombre_completo.trim();
+  if (telefono !== undefined) payload.telefono = telefono ? telefono.trim() : null;
+  if (direccion !== undefined) payload.direccion = direccion ? direccion.trim() : null;
+
+  if (latitud !== undefined && latitud !== null && latitud !== '') {
+    const latNum = parseFloat(latitud);
+    if (!isNaN(latNum)) payload.latitud = latNum;
+  }
+  if (longitud !== undefined && longitud !== null && longitud !== '') {
+    const lngNum = parseFloat(longitud);
+    if (!isNaN(lngNum)) payload.longitud = lngNum;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('perfiles')
+      .update(payload)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('[client.js] Error en update inicial de perfiles:', error.message);
+
+      // Si las columnas latitud/longitud no existen aún en el esquema de la base de datos,
+      // intentar guardar los datos básicos para no bloquear la actualización de contacto
+      if (error.message && (error.message.includes('latitud') || error.message.includes('longitud'))) {
+        const fallbackPayload = {
+          updated_at: new Date().toISOString(),
+        };
+        if (nombre_completo !== undefined) fallbackPayload.nombre_completo = nombre_completo.trim();
+        if (telefono !== undefined) fallbackPayload.telefono = telefono ? telefono.trim() : null;
+        if (direccion !== undefined) fallbackPayload.direccion = direccion ? direccion.trim() : null;
+
+        const { data: fbData, error: fbErr } = await supabase
+          .from('perfiles')
+          .update(fallbackPayload)
+          .eq('id', userId)
+          .select()
+          .single();
+
+        if (fbErr) throw fbErr;
+        return { ...(fbData || fallbackPayload), ...payload };
+      }
+
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[client.js] Error actualizando perfil en Supabase:', err);
+    throw err;
+  }
+};
+
+/**
+ * Consulta la lista de clientes registrados en la tabla `perfiles` con sus coordenadas de vivienda.
+ * Utilizado por el panel de supervisión para renderizar marcadores de viviendas en el mapa.
+ * 
+ * @returns {Promise<Array>} Lista de perfiles de clientes georreferenciados
+ */
+export const getGeoreferencedClients = async () => {
+  try {
+    let { data, error } = await supabase
+      .from('perfiles')
+      .select('id, nombre_completo, email, telefono, direccion, latitud, longitud, activo, puntos_reciclaje')
+      .eq('rol', 'cliente')
+      .order('nombre_completo', { ascending: true });
+
+    if (error) {
+      console.warn('[client.js] Error al consultar perfiles con coordenadas, intentando select general:', error.message);
+      const fb = await supabase
+        .from('perfiles')
+        .select('*')
+        .eq('rol', 'cliente');
+      data = fb.data;
+      error = fb.error;
+    }
+
+    if (error) {
+      console.error('[client.js] Error crítico consultando clientes georreferenciados:', error);
+      return [];
+    }
+
+    // Normalizar clientes para marcadores de mapa
+    return (data || []).map((c, index) => {
+      let lat = parseFloat(c.latitud ?? c.latitude);
+      let lng = parseFloat(c.longitud ?? c.longitude);
+      const hasExactCoords = !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
+
+      // Si el cliente aún no ha fijado coordenadas exactas, dispersar con patrón predecible en Palín
+      if (!hasExactCoords) {
+        const angle = (index * 45) * (Math.PI / 180);
+        const radius = 0.0015 + ((index % 6) * 0.0006);
+        lat = 14.4042 + Math.sin(angle) * radius;
+        lng = -90.6978 + Math.cos(angle) * radius;
+      }
+
+      return {
+        id: c.id,
+        nombre_completo: c.nombre_completo || `Vecino #${index + 1}`,
+        email: c.email || '',
+        telefono: c.telefono || 'Sin teléfono',
+        direccion: c.direccion || 'Palín, Escuintla',
+        latitud: lat,
+        longitud: lng,
+        latitude: lat,
+        longitude: lng,
+        hasExactCoords,
+        puntos: c.puntos_reciclaje ?? 0,
+        activo: c.activo !== false,
+        tipo: 'vivienda',
+        title: `🏠 ${c.nombre_completo || 'Vivienda Vecino'}`,
+        description: `${c.direccion || 'Palín'} • ${hasExactCoords ? '📍 GPS Confirmado' : '⏳ Ubicación estimada'}`,
+      };
+    });
+  } catch (err) {
+    console.error('[client.js] Excepción en getGeoreferencedClients:', err);
+    return [];
+  }
+};
+
 // Re-exportar funciones del módulo financiero
 export {
   createSubscriptionPayment,

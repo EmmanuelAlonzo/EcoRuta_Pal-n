@@ -12,96 +12,186 @@ import {
   Modal,
   ScrollView,
   Platform,
+  Switch,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { supabase } from '../../services/supabase';
 import { THEME } from '../../constants/theme';
-import { ROLES, ROLE_LABELS } from '../../constants/roles';
 import {
-  getPersonnelList,
   updatePersonnel,
   togglePersonnelStatus,
   deletePersonnel,
   getTrucks,
   getRoutes,
 } from '../../api/logistics';
+import { registerEnterpriseUser } from '../../api/roles';
 
+// Roles base del sistema para asignación rápida
+const BASE_ROLES = [
+  { key: 'operario', label: 'Operario', icon: '🚛' },
+  { key: 'piloto', label: 'Piloto', icon: '🧑‍✈️' },
+  { key: 'supervisor', label: 'Supervisor', icon: '📋' },
+  { key: 'admin', label: 'Admin', icon: '⚙️' },
+  { key: 'afiliado', label: 'Afiliado', icon: '🏪' },
+  { key: 'cliente', label: 'Cliente', icon: '👤' },
+];
+
+/**
+ * Pantalla dedicada 100% a la Gestión de Personal y Registro de Usuarios.
+ * - Lista de empleados consultada exclusivamente desde la tabla `perfiles` de Supabase.
+ * - Asignación directa de roles base y personalizados ('Otro rol...') en la columna `rol` de `perfiles`.
+ */
 export default function AdminPersonnelScreen({ navigation }) {
+  // Pestaña activa: 'list' (Nómina de Personal) | 'register' (Registrar Usuario)
+  const [activeTab, setActiveTab] = useState('list');
+
+  // ─── ESTADOS DE DATOS REALES DE SUPABASE ──────────────────────────────────
   const [personnel, setPersonnel] = useState([]);
   const [trucks, setTrucks] = useState([]);
   const [routes, setRoutes] = useState([]);
-  const [filterRole, setFilterRole] = useState('todos');
+
+  // Filtros y Búsqueda
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterRole, setFilterRole] = useState('todos');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Referencia para evitar desmontar el componente padre tras la carga inicial
-  const hasLoadedRef = useRef(false);
+  // ─── ESTADOS DEL FORMULARIO DE REGISTRO DE USUARIO ────────────────────────
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('EcoRuta2026*');
+  const [newUserPhone, setNewUserPhone] = useState('');
+  const [selectedRole, setSelectedRole] = useState('operario');
+  const [otherRoleInput, setOtherRoleInput] = useState('');
+  const [useInviteFlow, setUseInviteFlow] = useState(false);
+  const [isRegisteringUser, setIsRegisteringUser] = useState(false);
 
-  // Estado para Modal de Edición
+  // ─── MODAL DE ÉXITO DE REGISTRO ───────────────────────────────────────────
+  const [registeredSuccessModal, setRegisteredSuccessModal] = useState(false);
+  const [registeredUserData, setRegisteredUserData] = useState(null);
+
+  // ─── MODAL DE EDICIÓN DE EMPLEADO ─────────────────────────────────────────
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [editNombre, setEditNombre] = useState('');
   const [editTelefono, setEditTelefono] = useState('');
-  const [editRol, setEditRol] = useState('operario');
+  const [editRol, setEditRol] = useState('');
   const [editCamion, setEditCamion] = useState('');
   const [editRuta, setEditRuta] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  const loadData = useCallback(async (isPullToRefresh = false) => {
-    if (isPullToRefresh) {
-      setIsRefreshing(true);
-    } else if (!hasLoadedRef.current) {
-      // Solo desmontar/mostrar spinner completo en el primer montaje de la pantalla
-      setIsLoading(true);
-    }
+  // ─── REQUERIMIENTO 2: CONSULTA EXCLUSIVA DE PERFILES EN SUPABASE ──────────
+  const fetchPersonnel = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    else setIsRefreshing(true);
 
     try {
-      const [personnelData, trucksData, routesData] = await Promise.all([
-        getPersonnelList(),
-        getTrucks(false),
-        getRoutes(),
-      ]);
-      hasLoadedRef.current = true;
-      setPersonnel(personnelData || []);
-      setTrucks(trucksData || []);
-      setRoutes(routesData || []);
+      const { data, error } = await supabase
+        .from('perfiles')
+        .select('*')
+        .order('nombre_completo', { ascending: true });
+
+      if (error) {
+        console.error('[AdminPersonnel] Error consultando perfiles:', error.message);
+        Alert.alert('Error de Conexión', 'No se pudieron consultar los empleados de Supabase: ' + error.message);
+        setPersonnel([]);
+      } else {
+        setPersonnel(data || []);
+      }
     } catch (err) {
-      console.error('[AdminPersonnel] Error cargando personal:', err);
-      Alert.alert('Error', 'No se pudo cargar la lista de colaboradores desde Supabase.');
+      console.error('[AdminPersonnel] Excepción consultando perfiles:', err);
+      Alert.alert('Error', 'Ocurrió un problema al conectar con la base de datos de Supabase.');
+      setPersonnel([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   }, []);
 
+  // Soporte de logística para edición (camiones y rutas)
+  const fetchLogisticsSupport = useCallback(async () => {
+    try {
+      const [tData, rData] = await Promise.all([
+        getTrucks(false).catch(() => []),
+        getRoutes().catch(() => []),
+      ]);
+      setTrucks(tData || []);
+      setRoutes(rData || []);
+    } catch (e) {
+      console.warn('[AdminPersonnel] Error cargando camiones o rutas:', e);
+    }
+  }, []);
+
   useEffect(() => {
-    loadData();
+    fetchPersonnel();
+    fetchLogisticsSupport();
+
     const unsubscribe = navigation?.addListener?.('focus', () => {
-      // Recarga silenciosa al enfocar para no parpadear ni desmontar
-      loadData(true);
+      fetchPersonnel(true);
     });
     return unsubscribe;
-  }, [navigation, loadData]);
+  }, [navigation, fetchPersonnel, fetchLogisticsSupport]);
 
-  // Limpieza de estados locales al cerrar modal o desmontar pantalla
-  useEffect(() => {
-    if (!editModalVisible) {
-      setSelectedUser(null);
-      setEditNombre('');
-      setEditTelefono('');
-      setEditRol('operario');
-      setEditCamion('');
-      setEditRuta('');
+  // ─── ACCIÓN: REGISTRAR USUARIO CON ROL DIRECTO EN PERFILES ─────────────────
+  const handleRegisterUser = async () => {
+    if (!newUserName.trim()) {
+      Alert.alert('Campo Requerido', 'Por favor ingresa el nombre completo del colaborador.');
+      return;
     }
-  }, [editModalVisible]);
+    if (!newUserEmail.trim()) {
+      Alert.alert('Campo Requerido', 'Por favor ingresa el correo corporativo.');
+      return;
+    }
+    if (!newUserPassword || newUserPassword.length < 6) {
+      Alert.alert('Contraseña Inválida', 'La contraseña inicial debe tener al menos 6 caracteres.');
+      return;
+    }
 
-  useEffect(() => {
-    return () => {
-      setSelectedUser(null);
-      setEditCamion('');
-      setEditRuta('');
-    };
-  }, []);
+    // Rol directo: se usa "Otro rol..." si se escribió algo; de lo contrario el rol base seleccionado
+    const finalRole = (otherRoleInput.trim() || selectedRole || 'operario').trim();
+
+    setIsRegisteringUser(true);
+    try {
+      const result = await registerEnterpriseUser({
+        email: newUserEmail,
+        password: newUserPassword,
+        nombreCompleto: newUserName,
+        telefono: newUserPhone,
+        rol: finalRole, // Se envía como string simple directamente para la columna `rol` de perfiles
+        useInviteFlow,
+      });
+
+      setRegisteredUserData({
+        ...result.user,
+        nombre_completo: newUserName.trim(),
+        email: newUserEmail.trim().toLowerCase(),
+        telefono: newUserPhone.trim(),
+        rol: finalRole,
+        roleName: finalRole,
+        password: newUserPassword,
+        inviteCode: result.inviteCode,
+        method: result.method,
+      });
+      setRegisteredSuccessModal(true);
+
+      // Limpiar formulario tras éxito
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPhone('');
+      setSelectedRole('operario');
+      setOtherRoleInput('');
+      setNewUserPassword('EcoRuta2026*');
+
+      // Actualizar nómina de personal de inmediato
+      await fetchPersonnel(true);
+    } catch (err) {
+      console.error('[AdminPersonnel] Error registrando usuario:', err);
+      Alert.alert('Error de Registro', err.message || 'No se pudo completar el registro del usuario.');
+    } finally {
+      setIsRegisteringUser(false);
+    }
+  };
 
   // ─── ACCIÓN: SUSPENDER / ACTIVAR COLABORADOR ──────────────────────────────
   const handleToggleStatus = (item) => {
@@ -111,9 +201,7 @@ export default function AdminPersonnelScreen({ navigation }) {
 
     Alert.alert(
       `Confirmar ${actionWord}`,
-      `¿Deseas ${actionWord.toLowerCase()} el acceso de ${item.nombre_completo || 'este colaborador'} al sistema EcoRuta?${
-        !nextState ? '\n\nEl usuario no podrá iniciar sesión en la aplicación.' : ''
-      }`,
+      `¿Deseas ${actionWord.toLowerCase()} el acceso de ${item.nombre_completo || 'este colaborador'} al sistema?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -122,13 +210,10 @@ export default function AdminPersonnelScreen({ navigation }) {
           onPress: async () => {
             try {
               await togglePersonnelStatus(item.id, nextState);
-              await loadData();
-              Alert.alert(
-                'Estado actualizado',
-                `El colaborador ahora se encuentra ${nextState ? 'Activo' : 'Suspendido'}.`
-              );
+              await fetchPersonnel(true);
+              Alert.alert('Actualizado', `Colaborador ${nextState ? 'activado' : 'suspendido'} exitosamente.`);
             } catch (err) {
-              Alert.alert('Error', err.message || 'No se pudo cambiar el estado.');
+              Alert.alert('Error', err.message || 'No se pudo cambiar el estado del colaborador.');
             }
           },
         },
@@ -140,7 +225,7 @@ export default function AdminPersonnelScreen({ navigation }) {
   const handleDelete = (item) => {
     Alert.alert(
       '⚠️ Eliminar Colaborador',
-      `¿Estás seguro de eliminar el perfil de ${item.nombre_completo || 'este colaborador'}?\n\nEsta acción quitará el rol del personal de EcoRuta.`,
+      `¿Estás seguro de eliminar a ${item.nombre_completo || 'este colaborador'} de la base de datos? Esta acción es irreversible.`,
       [
         { text: 'Volver', style: 'cancel' },
         {
@@ -149,8 +234,8 @@ export default function AdminPersonnelScreen({ navigation }) {
           onPress: async () => {
             try {
               await deletePersonnel(item.id);
-              await loadData();
-              Alert.alert('Eliminado', 'El colaborador ha sido removido del sistema.');
+              await fetchPersonnel(true);
+              Alert.alert('Eliminado', 'El colaborador ha sido removido de la tabla perfiles.');
             } catch (err) {
               Alert.alert('Error al eliminar', err.message || 'No se pudo eliminar el registro.');
             }
@@ -166,270 +251,685 @@ export default function AdminPersonnelScreen({ navigation }) {
     setSelectedUser(item);
     setEditNombre(item.nombre_completo || '');
     setEditTelefono(item.telefono || '');
-    setEditRol(item.rol || 'operario');
+    setEditRol(item.rol || 'Operario');
     setEditCamion(item.codigo_camion || '');
     setEditRuta(item.ruta_asignada || '');
     setEditModalVisible(true);
   };
 
   const handleSaveEdit = async () => {
-    if (!selectedUser?.id) {
-      Alert.alert('Error', 'No hay ningún colaborador seleccionado.');
+    if (!selectedUser?.id) return;
+    if (!editNombre.trim()) {
+      Alert.alert('Campo Requerido', 'Por favor ingresa el nombre del colaborador.');
       return;
     }
 
-    if (!editNombre?.trim()) {
-      Alert.alert('Campo requerido', 'Por favor ingresa el nombre completo del colaborador.');
-      return;
-    }
-
-    setIsSaving(true);
+    setIsSavingEdit(true);
     try {
-      const isFieldStaff = editRol === 'operario' || editRol === 'piloto';
       const updates = {
         nombre_completo: editNombre.trim(),
         telefono: editTelefono.trim(),
-        rol: editRol,
-        codigo_camion: isFieldStaff ? (editCamion || null) : null,
-        ruta_asignada: isFieldStaff ? (editRuta || null) : null,
+        rol: editRol.trim(),
+        codigo_camion: editCamion.trim() || null,
+        ruta_asignada: editRuta.trim() || null,
       };
 
       await updatePersonnel(selectedUser.id, updates);
-
-      // Actualizar estado local reactivo inmediatamente para evitar parpadeos y re-renders destructivos
-      setPersonnel((prev) =>
-        prev.map((u) => (u.id === selectedUser.id ? { ...u, ...updates } : u))
-      );
-
       setEditModalVisible(false);
       setSelectedUser(null);
-
-      // Recarga silenciosa en segundo plano (isPullToRefresh=true) para no desmontar el componente
-      loadData(true);
-
-      Alert.alert('✅ Cambios Guardados', 'Los datos del colaborador se actualizaron exitosamente.');
+      await fetchPersonnel(true);
+      Alert.alert('✅ Cambios Guardados', 'Los datos del colaborador fueron actualizados en Supabase.');
     } catch (err) {
-      console.error('[AdminPersonnel] Error guardando edición:', err);
-      Alert.alert('Error al guardar', err.message || 'No se pudieron guardar los cambios en Supabase.');
+      console.error('[AdminPersonnel] Error al editar:', err);
+      Alert.alert('Error al guardar', err.message || 'No se pudieron actualizar los datos.');
     } finally {
-      setIsSaving(false);
+      setIsSavingEdit(false);
     }
   };
 
-  // Filtrado reactivo en memoria
+  // ─── UTILIDADES DE COPIADO DE CREDENCIALES (REQUERIMIENTO 5) ─────────────
+  const handleCopyText = async (text, label = 'Dato') => {
+    if (!text) return;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        Alert.alert('✅ Copiado', `${label} copiado al portapapeles.`);
+        return;
+      } catch (e) {
+        console.warn('Clipboard write error:', e);
+      }
+    }
+    Alert.alert(
+      `📋 ${label}`,
+      `Texto:\n\n${text}\n\n(Puedes mantener presionado el texto para seleccionarlo y copiarlo).`
+    );
+  };
+
+  const handleCopyAllCredentials = async () => {
+    if (!registeredUserData) return;
+    const formatted = [
+      '═══════════════════════════════════════',
+      '🌱 CREDENCIALES DE ACCESO - ECORUTA PALÍN',
+      '═══════════════════════════════════════',
+      `👤 Nombre: ${registeredUserData.nombre_completo || 'Colaborador'}`,
+      `🏷️ Rol en Sistema: ${registeredUserData.roleName || registeredUserData.rol}`,
+      `📧 Correo: ${registeredUserData.email}`,
+      `🔑 Contraseña: ${registeredUserData.password || 'EcoRuta2026*'}`,
+      registeredUserData.telefono ? `📞 Teléfono: ${registeredUserData.telefono}` : null,
+      registeredUserData.inviteCode ? `🎟️ Código Invitación: ${registeredUserData.inviteCode}` : null,
+      '═══════════════════════════════════════',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    await handleCopyText(formatted, 'Credenciales completas');
+  };
+
+  // ─── FILTRADO Y ESTADÍSTICAS DINÁMICAS ───────────────────────────────────
+  const distinctRoles = ['todos', ...new Set(personnel.map((p) => (p.rol || '').trim()).filter(Boolean))];
+
   const filteredPersonnel = personnel.filter((p) => {
-    const matchesRole = filterRole === 'todos' || p.rol === filterRole;
+    const roleMatch = filterRole === 'todos' || (p.rol && p.rol.toLowerCase() === filterRole.toLowerCase());
     const query = searchQuery.toLowerCase().trim();
-    const matchesSearch =
+    const searchMatch =
       !query ||
       (p.nombre_completo && p.nombre_completo.toLowerCase().includes(query)) ||
       (p.email && p.email.toLowerCase().includes(query)) ||
-      (p.codigo_camion && p.codigo_camion.toLowerCase().includes(query));
-    return matchesRole && matchesSearch;
+      (p.rol && p.rol.toLowerCase().includes(query)) ||
+      (p.codigo_camion && p.codigo_camion.toLowerCase().includes(query)) ||
+      (p.ruta_asignada && p.ruta_asignada.toLowerCase().includes(query));
+
+    return roleMatch && searchMatch;
   });
 
   const countActivos = personnel.filter((p) => p.activo !== false).length;
   const countSuspendidos = personnel.filter((p) => p.activo === false).length;
 
-  const getRoleBadgeStyle = (rol) => {
-    if (rol === 'supervisor') return { bg: '#FEF3C7', text: '#B45309', border: '#FDE68A', label: 'Supervisor' };
-    if (rol === 'piloto') return { bg: '#E0F2FE', text: '#0369A1', border: '#BAE6FD', label: 'Piloto' };
-    return { bg: '#DBEAFE', text: '#1E40AF', border: '#BFDBFE', label: 'Operario' };
+  const getRoleBadge = (rol) => {
+    const r = (rol || '').toLowerCase();
+    if (r.includes('admin')) return { bg: '#EDE9FE', text: '#6D28D9', border: '#DDD6FE', icon: '⚙️' };
+    if (r.includes('supervis')) return { bg: '#FEF3C7', text: '#B45309', border: '#FDE68A', icon: '📋' };
+    if (r.includes('pilot')) return { bg: '#E0F2FE', text: '#0369A1', border: '#BAE6FD', icon: '🧑‍✈️' };
+    if (r.includes('ayudant')) return { bg: '#FEE2E2', text: '#B91C1C', border: '#FECACA', icon: '🤝' };
+    if (r.includes('afiliad') || r.includes('comerc')) return { bg: '#D1FAE5', text: '#047857', border: '#A7F3D0', icon: '🏪' };
+    if (r.includes('client') || r.includes('ciudad')) return { bg: '#F1F5F9', text: '#475569', border: '#CBD5E1', icon: '👤' };
+    return { bg: '#DBEAFE', text: '#1E40AF', border: '#BFDBFE', icon: '🚛' };
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+
+      {/* ─── ENCABEZADO DEDICADO 100% A PERSONAL Y REGISTRO (REQ 1) ───────── */}
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.title}>👥 Gestión de Personal</Text>
             <Text style={styles.subtitle}>
-              Gestión EcoRuta • Cuadrillas, Pilotos y Supervisores
+              Nómina de colaboradores y registro de nuevos usuarios en Supabase
             </Text>
           </View>
         </View>
 
-        {/* Barra de Estadísticas Rápidas */}
-        <View style={styles.statsRow}>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{personnel.length}</Text>
-            <Text style={styles.statLabel}>Registrados</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={[styles.statNumber, { color: '#059669' }]}>{countActivos}</Text>
-            <Text style={styles.statLabel}>Activos</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={[styles.statNumber, { color: countSuspendidos > 0 ? '#DC2626' : '#64748B' }]}>
-              {countSuspendidos}
+        {/* Tabulador Principal: Lista vs Registrar */}
+        <View style={styles.tabNavRow}>
+          <TouchableOpacity
+            style={[styles.tabNavBtn, activeTab === 'list' && styles.tabNavBtnActive]}
+            onPress={() => setActiveTab('list')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.tabNavBtnText, activeTab === 'list' && styles.tabNavBtnTextActive]}>
+              📋 Lista de Personal ({personnel.length})
             </Text>
-            <Text style={styles.statLabel}>Suspendidos</Text>
-          </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabNavBtn, activeTab === 'register' && styles.tabNavBtnActive]}
+            onPress={() => setActiveTab('register')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.tabNavBtnText, activeTab === 'register' && styles.tabNavBtnTextActive]}>
+              ➕ Registrar Usuario
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Buscador */}
-        <TextInput
-          style={styles.searchInput}
-          placeholder="🔍 Buscar por nombre, correo o camión..."
-          placeholderTextColor="#94A3B8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
+        {/* Controles y Búsqueda solo en la pestaña de Lista */}
+        {activeTab === 'list' && (
+          <>
+            {/* Barra de Estadísticas */}
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>{personnel.length}</Text>
+                <Text style={styles.statLabel}>Registrados</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statNumber, { color: '#059669' }]}>{countActivos}</Text>
+                <Text style={styles.statLabel}>Activos</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statNumber, { color: countSuspendidos > 0 ? '#DC2626' : '#64748B' }]}>
+                  {countSuspendidos}
+                </Text>
+                <Text style={styles.statLabel}>Suspendidos</Text>
+              </View>
+            </View>
 
-        {/* Filtros por Rol */}
-        <View style={styles.filtersRow}>
-          {[
-            { key: 'todos', label: 'Todos' },
-            { key: 'operario', label: '🚛 Operarios' },
-            { key: 'piloto', label: '🧑‍✈️ Pilotos' },
-            { key: 'supervisor', label: '📋 Supervisores' },
-          ].map((f) => (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.filterChip, filterRole === f.key && styles.filterChipActive]}
-              onPress={() => setFilterRole(f.key)}
-            >
-              <Text style={[styles.filterChipText, filterRole === f.key && styles.filterChipTextActive]}>
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+            {/* Buscador */}
+            <TextInput
+              style={styles.searchInput}
+              placeholder="🔍 Buscar por nombre, correo, rol o camión..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+
+            {/* Filtros dinámicos por rol */}
+            {distinctRoles.length > 1 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersScroll}>
+                {distinctRoles.map((r) => (
+                  <TouchableOpacity
+                    key={r}
+                    style={[styles.filterChip, filterRole === r && styles.filterChipActive]}
+                    onPress={() => setFilterRole(r)}
+                  >
+                    <Text style={[styles.filterChipText, filterRole === r && styles.filterChipTextActive]}>
+                      {r === 'todos' ? 'Todos' : r.charAt(0).toUpperCase() + r.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </>
+        )}
       </View>
 
-      {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={THEME.roles.admin} />
-          <Text style={styles.loadingText}>Consultando nómina de colaboradores...</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredPersonnel}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={() => loadData(true)}
-              colors={[THEME.roles.admin]}
-              tintColor={THEME.roles.admin}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>👤</Text>
-              <Text style={styles.emptyTitle}>No se encontraron colaboradores</Text>
-              <Text style={styles.emptyDesc}>
-                {searchQuery
-                  ? 'Intenta con otro término de búsqueda.'
-                  : 'Aún no hay personal registrado con el rol seleccionado.'}
-              </Text>
+      {/* ─── PESTAÑA 1: LISTA DE PERSONAL (TABLA EXCLUSIVA DE SUPABASE) ──── */}
+      {activeTab === 'list' && (
+        <>
+          {isLoading ? (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color={THEME.roles.admin} />
+              <Text style={styles.loadingText}>Consultando tabla perfiles en Supabase...</Text>
             </View>
-          }
-          renderItem={({ item }) => {
-            const roleBadge = getRoleBadgeStyle(item.rol);
-            const isActive = item.activo !== false;
+          ) : (
+            <FlatList
+              data={filteredPersonnel}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={() => fetchPersonnel(true)}
+                  colors={[THEME.roles.admin]}
+                  tintColor={THEME.roles.admin}
+                />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyIcon}>👤</Text>
+                  <Text style={styles.emptyTitle}>No se encontraron colaboradores</Text>
+                  <Text style={styles.emptyDesc}>
+                    {searchQuery
+                      ? 'No hay registros que coincidan con la búsqueda.'
+                      : 'Aún no hay usuarios en la tabla `perfiles` de Supabase.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.emptyCreateBtn}
+                    onPress={() => setActiveTab('register')}
+                  >
+                    <Text style={styles.emptyCreateBtnText}>+ Registrar Primer Colaborador</Text>
+                  </TouchableOpacity>
+                </View>
+              }
+              renderItem={({ item }) => {
+                const roleBadge = getRoleBadge(item.rol);
+                const isActive = item.activo !== false;
 
-            return (
-              <View style={[styles.card, !isActive && styles.cardSuspended]}>
-                <View style={styles.cardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.nameRow}>
-                      <Text style={styles.userName}>{item.nombre_completo || 'Colaborador'}</Text>
+                return (
+                  <View style={[styles.card, !isActive && styles.cardSuspended]}>
+                    <View style={styles.cardHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.nameRow}>
+                          <Text style={styles.userName}>{item.nombre_completo || 'Colaborador'}</Text>
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              isActive ? styles.statusBadgeActive : styles.statusBadgeSuspended,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.statusText,
+                                isActive ? styles.statusTextActive : styles.statusTextSuspended,
+                              ]}
+                            >
+                              {isActive ? '🟢 Activo' : '🔴 Suspendido'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.userEmail}>{item.email || 'Sin correo registrado'}</Text>
+                      </View>
+
+                      {/* Badge dinámico de rol */}
                       <View
                         style={[
-                          styles.statusBadge,
-                          isActive ? styles.statusBadgeActive : styles.statusBadgeSuspended,
+                          styles.roleBadge,
+                          { backgroundColor: roleBadge.bg, borderColor: roleBadge.border },
                         ]}
                       >
-                        <Text
-                          style={[
-                            styles.statusText,
-                            isActive ? styles.statusTextActive : styles.statusTextSuspended,
-                          ]}
-                        >
-                          {isActive ? '🟢 Activo' : '🔴 Suspendido'}
+                        <Text style={[styles.roleBadgeText, { color: roleBadge.text }]}>
+                          {roleBadge.icon} {item.rol || 'Sin rol'}
                         </Text>
                       </View>
                     </View>
-                    <Text style={styles.userEmail}>{item.email || 'Sin correo registrado'}</Text>
+
+                    {/* Detalle de asignación si existe */}
+                    {(item.codigo_camion || item.ruta_asignada || item.telefono || item.departamento) && (
+                      <View style={styles.assignmentDetails}>
+                        {item.codigo_camion ? (
+                          <Text style={styles.assignmentText}>
+                            🚛 Camión: <Text style={styles.assignmentBold}>{item.codigo_camion}</Text>
+                          </Text>
+                        ) : null}
+                        {item.ruta_asignada ? (
+                          <Text style={styles.assignmentText}>
+                            📍 Ruta: <Text style={styles.assignmentBold}>{item.ruta_asignada}</Text>
+                          </Text>
+                        ) : null}
+                        {item.telefono ? (
+                          <Text style={styles.assignmentText}>
+                            📞 Tel: <Text style={styles.assignmentBold}>{item.telefono}</Text>
+                          </Text>
+                        ) : null}
+                        {item.departamento ? (
+                          <Text style={styles.assignmentText}>
+                            🏢 Área: <Text style={styles.assignmentBold}>{item.departamento}</Text>
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
+
+                    {/* Acciones CRUD */}
+                    <View style={styles.actionsRow}>
+                      <TouchableOpacity
+                        style={styles.actionBtnEdit}
+                        onPress={() => handleOpenEdit(item)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.actionBtnEditText}>✏️ Editar</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.actionBtnStatus,
+                          isActive ? styles.actionBtnSuspend : styles.actionBtnActivate,
+                        ]}
+                        onPress={() => handleToggleStatus(item)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.actionBtnStatusText,
+                            isActive ? styles.actionBtnSuspendText : styles.actionBtnActivateText,
+                          ]}
+                        >
+                          {isActive ? '🔒 Suspender' : '🔓 Activar'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionBtnDelete}
+                        onPress={() => handleDelete(item)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.actionBtnDeleteText}>🗑️</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View
-                    style={[
-                      styles.roleBadge,
-                      { backgroundColor: roleBadge.bg, borderColor: roleBadge.border },
-                    ]}
-                  >
-                    <Text style={[styles.roleBadgeText, { color: roleBadge.text }]}>
-                      {roleBadge.label}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Detalles de Asignación */}
-                <View style={styles.assignmentDetails}>
-                  <Text style={styles.assignmentText}>
-                    🚛 Camión: <Text style={styles.assignmentBold}>{item.codigo_camion || 'Sin asignar'}</Text>
-                  </Text>
-                  <Text style={styles.assignmentText}>
-                    📍 Ruta: <Text style={styles.assignmentBold}>{item.ruta_asignada || 'Sin asignar'}</Text>
-                  </Text>
-                  {item.telefono ? (
-                    <Text style={styles.assignmentText}>
-                      📞 Tel: <Text style={styles.assignmentBold}>{item.telefono}</Text>
-                    </Text>
-                  ) : null}
-                </View>
-
-                {/* Acciones CRUD */}
-                <View style={styles.actionsRow}>
-                  <TouchableOpacity
-                    style={styles.actionBtnEdit}
-                    onPress={() => handleOpenEdit(item)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnEditText}>✏️ Editar</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.actionBtnStatus,
-                      isActive ? styles.actionBtnSuspend : styles.actionBtnActivate,
-                    ]}
-                    onPress={() => handleToggleStatus(item)}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.actionBtnStatusText,
-                        isActive ? styles.actionBtnSuspendText : styles.actionBtnActivateText,
-                      ]}
-                    >
-                      {isActive ? '🔒 Suspender' : '🔓 Activar'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.actionBtnDelete}
-                    onPress={() => handleDelete(item)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnDeleteText}>🗑️</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          }}
-        />
+                );
+              }}
+            />
+          )}
+        </>
       )}
 
-      {/* ─── MODAL DE EDICIÓN DE COLABORADOR ──────────────────────────────── */}
+      {/* ─── PESTAÑA 2: FORMULARIO REGISTRAR USUARIO CON ROLES DINÁMICOS ──── */}
+      {activeTab === 'register' && (
+        <ScrollView
+          style={styles.registerScroll}
+          contentContainerStyle={styles.registerScrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* CARD 1: DATOS DEL EMPLEADO */}
+          <View style={styles.formCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={[styles.cardHeaderIconBadge, { backgroundColor: '#EDE9FE' }]}>
+                <Text style={styles.cardHeaderIcon}>👤</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Datos del Empleado</Text>
+                <Text style={styles.cardSubtitle}>
+                  Información personal y vías de comunicación directa
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.inputLabel}>Nombre Completo *</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Ej. Juan Carlos Méndez"
+                placeholderTextColor="#94A3B8"
+                value={newUserName}
+                onChangeText={setNewUserName}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.inputLabel}>Teléfono de Contacto</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="+502 5555-5555"
+                placeholderTextColor="#94A3B8"
+                value={newUserPhone}
+                onChangeText={setNewUserPhone}
+                keyboardType="phone-pad"
+              />
+            </View>
+          </View>
+
+          {/* CARD 2: CREDENCIALES DE ACCESO */}
+          <View style={styles.formCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={[styles.cardHeaderIconBadge, { backgroundColor: '#FEF3C7' }]}>
+                <Text style={styles.cardHeaderIcon}>🔑</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Credenciales de Acceso</Text>
+                <Text style={styles.cardSubtitle}>
+                  Cuenta para autenticación en Supabase Auth
+                </Text>
+              </View>
+            </View>
+
+            {/* Selector de Modo */}
+            <View style={styles.modeToggleCard}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.modeToggleTitle}>
+                  {useInviteFlow ? 'Flujo de Invitación Corporativa' : 'Alta Directa en Supabase Auth'}
+                </Text>
+                <Text style={styles.modeToggleSub}>
+                  {useInviteFlow
+                    ? 'Genera un código de invitación seguro para compartir con el usuario.'
+                    : 'Crea y activa el usuario directamente sin cerrar tu sesión actual.'}
+                </Text>
+              </View>
+              <Switch
+                value={useInviteFlow}
+                onValueChange={setUseInviteFlow}
+                trackColor={{ false: '#CBD5E1', true: THEME.roles.admin }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.inputLabel}>Correo Electrónico *</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="colaborador@ecoruta.com"
+                placeholderTextColor="#94A3B8"
+                value={newUserEmail}
+                onChangeText={setNewUserEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <View style={styles.labelWithHelperRow}>
+                <Text style={styles.inputLabel}>Contraseña Inicial *</Text>
+                <TouchableOpacity
+                  onPress={() => setNewUserPassword(`Eco${Math.floor(1000 + Math.random() * 9000)}*`)}
+                >
+                  <Text style={styles.labelHelperAction}>🎲 Generar segura</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Mínimo 6 caracteres"
+                placeholderTextColor="#94A3B8"
+                value={newUserPassword}
+                onChangeText={setNewUserPassword}
+              />
+            </View>
+          </View>
+
+          {/* CARD 3: ASIGNACIÓN DE ROL */}
+          <View style={styles.formCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={[styles.cardHeaderIconBadge, { backgroundColor: '#E0F2FE' }]}>
+                <Text style={styles.cardHeaderIcon}>🛡️</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Asignación de Rol</Text>
+                <Text style={styles.cardSubtitle}>
+                  Selecciona un rol base o escribe un rol personalizado para `perfiles`
+                </Text>
+              </View>
+            </View>
+
+            {/* Selector simple con los 6 roles base */}
+            <Text style={styles.inputLabel}>Selecciona un Rol Base *</Text>
+            <View style={styles.baseRolesGrid}>
+              {BASE_ROLES.map((r) => {
+                const isSelected = selectedRole === r.key && !otherRoleInput.trim();
+                return (
+                  <TouchableOpacity
+                    key={r.key}
+                    style={[styles.baseRoleChip, isSelected && styles.baseRoleChipActive]}
+                    onPress={() => {
+                      setSelectedRole(r.key);
+                      setOtherRoleInput('');
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.baseRoleChipIcon}>{r.icon}</Text>
+                    <Text
+                      style={[
+                        styles.baseRoleChipText,
+                        isSelected && styles.baseRoleChipTextActive,
+                      ]}
+                    >
+                      {r.label}
+                    </Text>
+                    {isSelected && <Text style={styles.baseRoleChipCheck}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Campo de texto opcional: "Otro rol..." */}
+            <View style={styles.otherRoleContainer}>
+              <Text style={styles.inputLabel}>Otro rol... (opcional)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Escribe libremente un nuevo rol (ej. ayudante, guardia)"
+                placeholderTextColor="#94A3B8"
+                value={otherRoleInput}
+                onChangeText={setOtherRoleInput}
+                autoCapitalize="none"
+              />
+              <Text style={styles.otherRoleHint}>
+                Rol a guardar en la tabla perfiles:{' '}
+                <Text style={styles.otherRoleHintBold}>
+                  {(otherRoleInput.trim() || selectedRole || 'operario').trim()}
+                </Text>
+              </Text>
+            </View>
+          </View>
+
+          {/* BOTÓN DE ACCIÓN FINAL */}
+          <View style={styles.submitSection}>
+            <TouchableOpacity
+              style={[
+                styles.submitUserBtn,
+                isRegisteringUser && styles.submitUserBtnDisabled,
+              ]}
+              onPress={handleRegisterUser}
+              disabled={isRegisteringUser}
+              activeOpacity={0.85}
+            >
+              {isRegisteringUser ? (
+                <View style={styles.btnRow}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.submitUserBtnText}> Guardando en Supabase...</Text>
+                </View>
+              ) : (
+                <Text style={styles.submitUserBtnText}>
+                  {useInviteFlow ? '📨 Generar Invitación' : '🚀 Registrar Usuario'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ─── MODAL DE ÉXITO DE REGISTRO (REQUERIMIENTO 5) ───────────────────── */}
+      <Modal visible={registeredSuccessModal} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardSuccess}>
+            <View style={styles.successIconBadge}>
+              <Text style={styles.successIcon}>🎉</Text>
+            </View>
+
+            <Text style={styles.successTitle}>¡Usuario Registrado!</Text>
+            <Text style={styles.successSubtitle}>
+              Se guardó el usuario en Supabase Auth y su perfil en `perfiles` con el rol seleccionado.
+            </Text>
+
+            {/* Credenciales Estilizadas */}
+            <View style={styles.credentialsContainer}>
+              <View style={styles.credentialHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.credentialUserName}>
+                    {registeredUserData?.nombre_completo}
+                  </Text>
+                  <Text style={styles.credentialUserSub}>
+                    {registeredUserData?.departamento || 'EcoRuta Palín'}
+                  </Text>
+                </View>
+                <View style={styles.credentialRoleBadge}>
+                  <Text style={styles.credentialRoleBadgeText}>
+                    🛡️ {registeredUserData?.roleName || registeredUserData?.rol}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Fila Correo */}
+              <View style={styles.credentialItemBox}>
+                <View style={styles.credentialItemLabelRow}>
+                  <Text style={styles.credentialItemLabel}>📧 CORREO ELECTRÓNICO</Text>
+                  <TouchableOpacity
+                    onPress={() => handleCopyText(registeredUserData?.email, 'Correo Electrónico')}
+                    style={styles.copyMiniBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.copyMiniBtnText}>📋 Copiar</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.credentialMonoText} selectable={true}>
+                  {registeredUserData?.email}
+                </Text>
+              </View>
+
+              {/* Fila Contraseña */}
+              <View style={styles.credentialItemBox}>
+                <View style={styles.credentialItemLabelRow}>
+                  <Text style={styles.credentialItemLabel}>🔑 CONTRASEÑA INICIAL</Text>
+                  <TouchableOpacity
+                    onPress={() => handleCopyText(registeredUserData?.password, 'Contraseña')}
+                    style={styles.copyMiniBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.copyMiniBtnText}>📋 Copiar</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.credentialMonoText} selectable={true}>
+                  {registeredUserData?.password}
+                </Text>
+              </View>
+
+              {/* Fila Rol en BD */}
+              <View style={styles.credentialItemBox}>
+                <View style={styles.credentialItemLabelRow}>
+                  <Text style={styles.credentialItemLabel}>🏷️ ROL EN TABLA PERFILES</Text>
+                </View>
+                <Text style={styles.credentialRoleSaved} selectable={true}>
+                  {registeredUserData?.rol}
+                </Text>
+              </View>
+
+              {/* Fila Token de Invitación (si aplica) */}
+              {Boolean(registeredUserData?.inviteCode) && (
+                <View style={[styles.credentialItemBox, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                  <View style={styles.credentialItemLabelRow}>
+                    <Text style={[styles.credentialItemLabel, { color: '#166534' }]}>
+                      🎟️ CÓDIGO DE INVITACIÓN
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleCopyText(registeredUserData?.inviteCode, 'Código de Invitación')}
+                      style={[styles.copyMiniBtn, { backgroundColor: '#DCFCE7' }]}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.copyMiniBtnText, { color: '#15803D' }]}>📋 Copiar</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text
+                    style={[styles.credentialMonoText, { color: '#15803D', fontWeight: '800' }]}
+                    selectable={true}
+                  >
+                    {registeredUserData?.inviteCode}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Botones de Acción */}
+            <View style={styles.modalSuccessActions}>
+              <TouchableOpacity
+                style={styles.copyAllBtn}
+                onPress={handleCopyAllCredentials}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.copyAllBtnText}>📋 Copiar Todo el Formato</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalDoneBtn}
+                onPress={() => {
+                  setRegisteredSuccessModal(false);
+                  setRegisteredUserData(null);
+                  setActiveTab('list');
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.modalDoneBtnText}>Listo, Ver Lista de Personal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── MODAL DE EDICIÓN DE EMPLEADO ──────────────────────────────────── */}
       <Modal visible={editModalVisible} transparent={true} animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Editar Colaborador</Text>
             <Text style={styles.modalSubtitle}>
-              Actualiza el rol y la información del colaborador de EcoRuta.
+              Actualiza el rol y los datos del colaborador en Supabase.
             </Text>
 
             <ScrollView showsVerticalScrollIndicator={false}>
@@ -450,113 +950,109 @@ export default function AdminPersonnelScreen({ navigation }) {
                 keyboardType="phone-pad"
               />
 
-              <Text style={styles.inputLabel}>Rol Asignado *</Text>
-              <View style={styles.rolePickerRow}>
-                {[
-                  { key: 'operario', label: '🚛 Operario' },
-                  { key: 'piloto', label: '🧑‍✈️ Piloto' },
-                  { key: 'supervisor', label: '📋 Supervisor' },
-                ].map((r) => (
+              <Text style={styles.inputLabel}>Rol del Colaborador *</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editRol}
+                onChangeText={setEditRol}
+                placeholder="Ej. Piloto, Ayudante, Operario..."
+              />
+
+              {/* Chips rápidos de roles base */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
+                {BASE_ROLES.map((r) => (
                   <TouchableOpacity
                     key={r.key}
-                    style={[styles.roleSelectChip, editRol === r.key && styles.roleSelectChipActive]}
+                    style={[
+                      styles.quickSelectChip,
+                      (editRol || '').toLowerCase() === r.key && styles.quickSelectChipActive,
+                    ]}
                     onPress={() => setEditRol(r.key)}
                   >
                     <Text
                       style={[
-                        styles.roleSelectChipText,
-                        editRol === r.key && styles.roleSelectChipTextActive,
+                        styles.quickSelectChipText,
+                        (editRol || '').toLowerCase() === r.key && styles.quickSelectChipTextActive,
                       ]}
                     >
-                      {r.label}
+                      {r.icon} {r.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
 
-              {/* Opciones de Asignación Territorial para Operarios y Pilotos */}
-              {(editRol === 'operario' || editRol === 'piloto') && (
-                <View style={styles.logisticsAssignmentBox}>
-                  <Text style={styles.inputLabel}>Camión Asignado (Flota Palín)</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={editCamion}
-                    onChangeText={setEditCamion}
-                    placeholder="Ej. CAM-01"
-                    autoCapitalize="characters"
-                  />
-                  {trucks.length > 0 && (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
-                      {trucks.map((t) => (
-                        <TouchableOpacity
-                          key={t.id?.toString()}
-                          style={[
-                            styles.quickSelectChip,
-                            editCamion === t.codigo && styles.quickSelectChipActive,
-                          ]}
-                          onPress={() => setEditCamion(t.codigo)}
-                        >
-                          <Text
-                            style={[
-                              styles.quickSelectChipText,
-                              editCamion === t.codigo && styles.quickSelectChipTextActive,
-                            ]}
-                          >
-                            🚛 {t.codigo}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  )}
+              <Text style={[styles.inputLabel, { marginTop: 12 }]}>Camión Asignado (Opcional)</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editCamion}
+                onChangeText={setEditCamion}
+                placeholder="Ej. CAM-01"
+                autoCapitalize="characters"
+              />
+              {trucks.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
+                  {trucks.map((t) => (
+                    <TouchableOpacity
+                      key={t.id?.toString()}
+                      style={[styles.quickSelectChip, editCamion === t.codigo && styles.quickSelectChipActive]}
+                      onPress={() => setEditCamion(t.codigo)}
+                    >
+                      <Text
+                        style={[
+                          styles.quickSelectChipText,
+                          editCamion === t.codigo && styles.quickSelectChipTextActive,
+                        ]}
+                      >
+                        🚛 {t.codigo}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
 
-                  <Text style={[styles.inputLabel, { marginTop: 12 }]}>Ruta Asignada (Sectores)</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={editRuta}
-                    onChangeText={setEditRuta}
-                    placeholder="Ej. Zona 1 — Casco Urbano"
-                  />
-                  {routes.length > 0 && (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
-                      {routes.map((r) => (
-                        <TouchableOpacity
-                          key={r.id?.toString()}
-                          style={[
-                            styles.quickSelectChip,
-                            editRuta === r.nombre && styles.quickSelectChipActive,
-                          ]}
-                          onPress={() => setEditRuta(r.nombre)}
-                        >
-                          <Text
-                            style={[
-                              styles.quickSelectChipText,
-                              editRuta === r.nombre && styles.quickSelectChipTextActive,
-                            ]}
-                          >
-                            📍 {r.nombre}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  )}
-                </View>
+              <Text style={[styles.inputLabel, { marginTop: 12 }]}>Ruta Asignada (Opcional)</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editRuta}
+                onChangeText={setEditRuta}
+                placeholder="Ej. Zona 1 — Casco Urbano"
+              />
+              {routes.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickChipsRow}>
+                  {routes.map((r) => (
+                    <TouchableOpacity
+                      key={r.id?.toString()}
+                      style={[styles.quickSelectChip, editRuta === r.nombre && styles.quickSelectChipActive]}
+                      onPress={() => setEditRuta(r.nombre)}
+                    >
+                      <Text
+                        style={[
+                          styles.quickSelectChipText,
+                          editRuta === r.nombre && styles.quickSelectChipTextActive,
+                        ]}
+                      >
+                        📍 {r.nombre}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               )}
 
               <View style={styles.modalActionsRow}>
                 <TouchableOpacity
                   style={styles.modalCancelBtn}
                   onPress={() => setEditModalVisible(false)}
-                  disabled={isSaving}
+                  disabled={isSavingEdit}
                 >
                   <Text style={styles.modalCancelBtnText}>Cancelar</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalSaveBtn, isSaving && styles.modalSaveBtnDisabled]}
+                  style={[styles.modalSaveBtn, isSavingEdit && styles.modalSaveBtnDisabled]}
                   onPress={handleSaveEdit}
-                  disabled={isSaving}
+                  disabled={isSavingEdit}
                 >
-                  {isSaving ? (
+                  {isSavingEdit ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <Text style={styles.modalSaveBtnText}>Guardar Cambios</Text>
@@ -584,7 +1080,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.border,
     ...(Platform.OS === 'web' && {
-      maxWidth: 1200,
+      maxWidth: 900,
       width: '100%',
       alignSelf: 'center',
     }),
@@ -593,7 +1089,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   title: {
     fontSize: 22,
@@ -605,12 +1101,45 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
     marginTop: 2,
   },
+  tabNavRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    marginTop: 10,
+    marginBottom: 8,
+    gap: 4,
+  },
+  tabNavBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabNavBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabNavBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tabNavBtnTextActive: {
+    color: THEME.roles.admin,
+    fontWeight: '800',
+  },
   statsRow: {
     flexDirection: 'row',
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     padding: 10,
-    marginBottom: 12,
+    marginTop: 6,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -633,26 +1162,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 8,
     fontSize: 13,
     color: THEME.colors.textPrimary,
-    marginBottom: 10,
+    marginBottom: 6,
   },
-  filtersRow: {
+  filtersScroll: {
     flexDirection: 'row',
-    gap: 6,
+    marginBottom: 4,
   },
   filterChip: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 20,
     backgroundColor: '#F1F5F9',
+    marginRight: 6,
   },
   filterChipActive: {
     backgroundColor: THEME.roles.admin,
   },
   filterChipText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: THEME.colors.textSecondary,
   },
@@ -673,10 +1203,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   listContent: {
-    padding: 20,
+    padding: 16,
     paddingBottom: 40,
     ...(Platform.OS === 'web' && {
-      maxWidth: 1200,
+      maxWidth: 900,
       width: '100%',
       alignSelf: 'center',
     }),
@@ -711,7 +1241,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   userName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: THEME.colors.textPrimary,
   },
@@ -721,7 +1251,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 10,
   },
@@ -755,7 +1285,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
     padding: 10,
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -824,13 +1354,17 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center',
     padding: 30,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   emptyIcon: {
-    fontSize: 40,
+    fontSize: 36,
     marginBottom: 8,
   },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: THEME.colors.textPrimary,
   },
@@ -839,15 +1373,400 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
     textAlign: 'center',
     marginTop: 4,
+    marginBottom: 12,
+  },
+  emptyCreateBtn: {
+    backgroundColor: THEME.roles.admin,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  emptyCreateBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 
-  // Modal
+  // ─── FORMULARIO REDISEÑADO: REGISTRAR USUARIO ────────────────────────────
+  registerScroll: {
+    flex: 1,
+    backgroundColor: THEME.colors.background,
+  },
+  registerScrollContent: {
+    padding: 16,
+    paddingBottom: 48,
+    gap: 16,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 800,
+      width: '100%',
+      alignSelf: 'center',
+    }),
+  },
+  formCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  cardHeaderIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardHeaderIcon: {
+    fontSize: 20,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  cardSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  fieldGroup: {
+    marginBottom: 12,
+  },
+  labelWithHelperRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  labelHelperAction: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.roles.admin,
+  },
+  modeToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  modeToggleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  modeToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  textInput: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+
+  // Selector de roles base
+  baseRolesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  baseRoleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    gap: 6,
+  },
+  baseRoleChipActive: {
+    backgroundColor: '#EDE9FE',
+    borderColor: THEME.roles.admin,
+    shadowColor: THEME.roles.admin,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  baseRoleChipIcon: {
+    fontSize: 14,
+  },
+  baseRoleChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  baseRoleChipTextActive: {
+    color: THEME.roles.admin,
+    fontWeight: '800',
+  },
+  baseRoleChipCheck: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: THEME.roles.admin,
+  },
+  otherRoleContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  otherRoleHint: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 6,
+  },
+  otherRoleHintBold: {
+    fontWeight: '800',
+    color: THEME.roles.admin,
+  },
+
+  deptChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  deptChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  deptChipActive: {
+    backgroundColor: '#EDE9FE',
+    borderColor: THEME.roles.admin,
+  },
+  deptChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  deptChipTextActive: {
+    color: THEME.roles.admin,
+    fontWeight: '700',
+  },
+  submitSection: {
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  submitUserBtn: {
+    backgroundColor: THEME.roles.admin,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    shadowColor: THEME.roles.admin,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  submitUserBtnDisabled: {
+    opacity: 0.7,
+  },
+  submitUserBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  // ─── MODAL DE ÉXITO ───────────────────────────────────────────────────────
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
-    padding: 20,
+    padding: 16,
   },
+  modalCardSuccess: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 22,
+    alignItems: 'center',
+    maxWidth: 520,
+    width: '100%',
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  successIconBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  successIcon: {
+    fontSize: 28,
+  },
+  successTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  successSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 3,
+    marginBottom: 16,
+    lineHeight: 17,
+  },
+  credentialsContainer: {
+    width: '100%',
+    gap: 8,
+    marginBottom: 16,
+  },
+  credentialHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  credentialUserName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  credentialUserSub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  credentialRoleBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#EDE9FE',
+  },
+  credentialRoleBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.roles.admin,
+  },
+  credentialItemBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  credentialItemLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  credentialItemLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  copyMiniBtn: {
+    backgroundColor: '#EDE9FE',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  copyMiniBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.roles.admin,
+  },
+  credentialMonoText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  credentialRoleSaved: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: THEME.roles.admin,
+    textTransform: 'uppercase',
+  },
+  modalSuccessActions: {
+    width: '100%',
+    gap: 8,
+  },
+  copyAllBtn: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  copyAllBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  modalDoneBtn: {
+    backgroundColor: THEME.roles.admin,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalDoneBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  // ─── MODAL DE EDICIÓN ─────────────────────────────────────────────────────
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -855,22 +1774,15 @@ const styles = StyleSheet.create({
     maxHeight: '85%',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     color: THEME.colors.textPrimary,
   },
   modalSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: THEME.colors.textSecondary,
-    marginBottom: 16,
-    marginTop: 2,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: THEME.colors.textPrimary,
-    marginBottom: 6,
-    marginTop: 10,
+    marginBottom: 12,
+    marginTop: 1,
   },
   modalInput: {
     backgroundColor: '#F8FAFC',
@@ -881,73 +1793,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: THEME.colors.textPrimary,
-  },
-  rolePickerRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  roleSelectChip: {
-    flex: 1,
-    paddingVertical: 10,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  roleSelectChipActive: {
-    backgroundColor: '#EDE9FE',
-    borderColor: THEME.roles.admin,
-  },
-  roleSelectChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: THEME.colors.textSecondary,
-  },
-  roleSelectChipTextActive: {
-    color: THEME.roles.admin,
-    fontWeight: '800',
-  },
-  modalActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 22,
-  },
-  modalCancelBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  modalCancelBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: THEME.colors.textSecondary,
-  },
-  modalSaveBtn: {
-    flex: 1.5,
-    paddingVertical: 12,
-    backgroundColor: THEME.roles.admin,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  modalSaveBtnDisabled: {
-    opacity: 0.7,
-  },
-  modalSaveBtnText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  logisticsAssignmentBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
   },
   quickChipsRow: {
     flexDirection: 'row',
@@ -975,5 +1820,37 @@ const styles = StyleSheet.create({
   quickSelectChipTextActive: {
     color: THEME.roles.admin,
     fontWeight: '800',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.textSecondary,
+  },
+  modalSaveBtn: {
+    flex: 1.5,
+    paddingVertical: 10,
+    backgroundColor: THEME.roles.admin,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalSaveBtnDisabled: {
+    opacity: 0.7,
+  },
+  modalSaveBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

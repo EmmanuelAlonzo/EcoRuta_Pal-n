@@ -4,6 +4,7 @@ import { Text } from 'react-native';
 import ClientHomeScreen from '../../screens/client/ClientHomeScreen';
 import ClientWalletScreen from '../../screens/client/ClientWalletScreen';
 import RewardsScreen from '../../screens/client/RewardsScreen';
+import ClientProfileScreen from '../../screens/client/ClientProfileScreen';
 import PlaceholderTabScreen from '../../screens/common/PlaceholderTabScreen';
 import { THEME } from '../../constants/theme';
 
@@ -31,6 +32,14 @@ export default function ClientNavigator() {
         options={{
           tabBarLabel: 'Inicio',
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>🌱</Text>,
+        }}
+      />
+      <Tab.Screen
+        name="ClientProfile"
+        component={ClientProfileScreen}
+        options={{
+          tabBarLabel: 'Mi Perfil',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>👤</Text>,
         }}
       />
       <Tab.Screen

@@ -2,9 +2,11 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import AdminHomeScreen from '../../screens/admin/AdminHomeScreen';
+import AdminFleetMapScreen from '../../screens/admin/AdminFleetMapScreen';
 import ManageRedemptionsScreen from '../../screens/admin/ManageRedemptionsScreen';
 import AdminPersonnelScreen from '../../screens/admin/AdminPersonnelScreen';
-import PlaceholderTabScreen from '../../screens/common/PlaceholderTabScreen';
+import AdminRolesScreen from '../../screens/admin/AdminRolesScreen';
+import SupervisorAssignScreen from '../../screens/supervisor/SupervisorAssignScreen';
 import { THEME } from '../../constants/theme';
 
 const Tab = createBottomTabNavigator();
@@ -34,11 +36,27 @@ export default function AdminNavigator() {
         }}
       />
       <Tab.Screen
+        name="AdminFleetMap"
+        component={AdminFleetMapScreen}
+        options={{
+          tabBarLabel: 'Radar Flota',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🛰️</Text>,
+        }}
+      />
+      <Tab.Screen
         name="AdminPersonnel"
         component={AdminPersonnelScreen}
         options={{
           tabBarLabel: 'Personal',
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>👥</Text>,
+        }}
+      />
+      <Tab.Screen
+        name="AdminRoles"
+        component={AdminRolesScreen}
+        options={{
+          tabBarLabel: 'Roles',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🛡️</Text>,
         }}
       />
       <Tab.Screen
@@ -51,15 +69,9 @@ export default function AdminNavigator() {
       />
       <Tab.Screen
         name="AdminRoutes"
-        children={() => (
-          <PlaceholderTabScreen
-            title="Gestión de Rutas"
-            subtitle="Creación, asignación y monitoreo de las rutas de recolección en Palín."
-            icon="🗺️"
-          />
-        )}
+        component={SupervisorAssignScreen}
         options={{
-          tabBarLabel: 'Rutas',
+          tabBarLabel: 'Cuadrillas',
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>🗺️</Text>,
         }}
       />

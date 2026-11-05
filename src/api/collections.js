@@ -102,8 +102,9 @@ export const uploadCollectionRecord = async (record) => {
 
 /**
  * Consulta la información del titular en la tabla `perfiles` para la validación visual antifraude.
+ * Permite buscar por `codigo_vecino` (ej. "P-A1B2C3") o por UUID `id`.
  * 
- * @param {string} clienteId - UUID del ciudadano escaneado
+ * @param {string} clienteId - UUID o código de vecino del ciudadano escaneado
  * @returns {Promise<{ found: boolean, profile: object | null, error?: string }>}
  */
 export const getCitizenVerification = async (clienteId) => {
@@ -111,16 +112,33 @@ export const getCitizenVerification = async (clienteId) => {
     return { found: false, profile: null };
   }
 
+  const cleanCode = clienteId.trim();
+
   try {
-    const { data, error } = await supabase
+    let data = null;
+
+    // 1. Intentar buscar primero por codigo_vecino
+    const { data: codeData, error: codeErr } = await supabase
       .from('perfiles')
-      .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion, puntos_reciclaje, puntos_acumulados')
-      .eq('id', clienteId)
+      .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion, puntos_reciclaje, puntos_acumulados, codigo_vecino')
+      .ilike('codigo_vecino', cleanCode)
       .maybeSingle();
 
-    if (error) {
-      console.warn('[collections.js] Error al consultar perfil para verificación:', error.message);
-      return { found: false, profile: null, error: error.message };
+    if (codeData) {
+      data = codeData;
+    } else {
+      // 2. Si no se encuentra, buscar por id UUID
+      const { data: idData, error: idErr } = await supabase
+        .from('perfiles')
+        .select('id, nombre_completo, direccion, activo, rol, email, telefono, estado_suscripcion, puntos_reciclaje, puntos_acumulados, codigo_vecino')
+        .eq('id', cleanCode)
+        .maybeSingle();
+
+      if (idErr && codeErr) {
+        console.warn('[collections.js] Error al consultar perfil para verificación:', idErr.message);
+        return { found: false, profile: null, error: idErr.message };
+      }
+      data = idData;
     }
 
     if (!data) {
@@ -131,6 +149,7 @@ export const getCitizenVerification = async (clienteId) => {
       found: true,
       profile: {
         id: data.id,
+        codigo_vecino: data.codigo_vecino || null,
         nombre_completo: data.nombre_completo || 'Titular sin nombre registrado',
         direccion: data.direccion || 'Dirección no especificada en el sistema',
         activo: data.activo !== false,
